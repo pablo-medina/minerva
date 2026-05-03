@@ -10,6 +10,17 @@ export type ChatImageAttachment = {
   dataUrl: string;
 };
 
+/** Metrics for one assistant turn (Prompt API does not expose usage; values are estimates). */
+export type NanoTurnStats = {
+  modelId: string;
+  totalLatencyMs: number;
+  ttftMs?: number;
+  approxPromptTokenEstimate: number;
+  approxCompletionTokenEstimate: number;
+  approxTotalTokenEstimate: number;
+  genTps?: number;
+};
+
 export type ChatMessage = {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -17,6 +28,8 @@ export type ChatMessage = {
   createdAt: string;
   /** Optional images included in this user turn (on-device multimodal Prompt API). */
   attachments?: ChatImageAttachment[];
+  /** Present on assistant messages after a completed on-device generation. */
+  nanoTurnStats?: NanoTurnStats;
 };
 
 export type ChatSession = {
@@ -24,6 +37,8 @@ export type ChatSession = {
   title: string;
   createdAt: string;
   updatedAt: string;
+  /** Denormalized from IndexedDB for sidebar filtering (synced when messages are saved). */
+  hasUserMessage?: boolean;
 };
 
 export type LocalSettings = {

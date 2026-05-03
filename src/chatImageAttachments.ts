@@ -18,6 +18,40 @@ export function isSupportedChatImageMime(mime: string): boolean {
   return IMAGE_MIME_RE.test(mime.trim());
 }
 
+/** Image files from paste `clipboardData` (screenshots, copied image files). */
+export function collectPastedImageFilesFromClipboard(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  const seen = new Set<string>();
+  const out: File[] = [];
+  const pushUnique = (f: File, mimeFromItem?: string) => {
+    const mime = (f.type || mimeFromItem || '').trim();
+    if (!mime || !isSupportedChatImageMime(mime)) return;
+    const key = `${f.name}\0${f.size}\0${mime}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(f);
+  };
+
+  const { items } = data;
+  if (items?.length) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind !== 'file') continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      pushUnique(file, item.type || undefined);
+    }
+  }
+
+  if (out.length === 0 && data.files?.length) {
+    for (const f of Array.from(data.files)) {
+      pushUnique(f);
+    }
+  }
+
+  return out;
+}
+
 export function threadUsesImageInputs(messages: ChatMessage[]): boolean {
   return messages.some((m) => m.role === 'user' && (m.attachments?.length ?? 0) > 0);
 }

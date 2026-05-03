@@ -1,5 +1,4 @@
-import { LS_LANG, LS_THEME } from './constants';
-import type { AppLang, ThemeMode } from './types';
+import type { AppLang } from './types';
 
 type Dict = Record<string, string>;
 
@@ -54,7 +53,7 @@ Open \`chrome://on-device-internals\` for download status and logs.`,
   'settings.chatTitleIntervalHelp':
     'After your first message and the assistant reply, Minerva asks the on-device model for a short sidebar title. If this number is greater than 0, it asks again every that many user messages (for example 10 → after user messages 1, 11, 21…). Use 0 for only the first automatic title.',
   'settings.lead':
-    'Preferences are stored in this browser. The system prompt is sent to the model when a chat session starts.',
+    'Preferences and chats are stored in IndexedDB on this device. The system prompt is sent to the model when a chat session starts.',
   'settings.navAria': 'Settings categories',
   'settings.sectionGeneral': 'General',
   'settings.sectionProfile': 'Profile',
@@ -91,9 +90,11 @@ Rules:
   'settings.clearAllDataAction': 'Delete everything',
   'settings.clearedChats': 'All chats were deleted.',
   'settings.clearedAllData': 'All Minerva data in this browser was removed.',
-  'settings.localStorageUsageLine': 'Local storage (approx.): {pct}%',
-  'settings.localStorageUsageTitle':
-    'Roughly {pct}% of a typical per-site localStorage budget (~{quotaMiB} MiB in many browsers). The real limit can differ; this counts all keys for this site.',
+  'settings.storageQuotaLine': 'Storage: {used} MB used · {free} MB free · {quota} MB quota',
+  'settings.storageQuotaTitle':
+    'Estimated storage for this site: {used} MB in use, {free} MB free, {quota} MB total quota (browser; includes IndexedDB and other persisted data).',
+  'settings.storageQuotaUnavailable': 'Storage estimate unavailable in this environment.',
+  'settings.storageQuotaUnavailableTitle': 'This browser did not report storage quota details.',
   'chat.dialog.title': 'Chats',
   'chat.dialog.newChat': 'New chat',
   'chat.dialog.empty': 'No chats yet.',
@@ -113,7 +114,52 @@ Rules:
   'chat.code.download': 'Download as file',
   'chat.code.copyAria': 'Copy code to clipboard',
   'chat.code.downloadAria': 'Download code as a text file',
-  'composer.toolbarAria': 'Attach images and view chat summary',
+  'chat.export.open': 'Export chat…',
+  'chat.export.title': 'Export chat',
+  'chat.export.lead':
+    'Choose a format. If the chat includes images, HTML and Markdown downloads are a ZIP folder you can unpack and open offline.',
+  'chat.export.format': 'Format',
+  'chat.export.formatHtml': 'HTML (styled)',
+  'chat.export.formatMarkdown': 'Markdown',
+  'chat.export.formatPdf': 'PDF',
+  'chat.export.start': 'Download',
+  'chat.export.cancel': 'Cancel',
+  'chat.export.metaExported': 'Exported',
+  'chat.export.footer': 'Exported from Minerva',
+  'chat.export.phase.collecting': 'Preparing…',
+  'chat.export.phase.building': 'Building document…',
+  'chat.export.phase.packaging': 'Creating ZIP…',
+  'chat.export.phase.renderingPdf': 'Rendering PDF…',
+  'chat.export.phase.done': 'Done',
+  'chat.export.phase.cancelled': 'Cancelled',
+  'chat.export.phase.error': 'Something went wrong',
+  'chat.export.empty': 'There are no messages to export yet.',
+  'chat.export.error': 'The export could not be completed. Please try again.',
+  'chat.export.unsupported': 'That export format is not available on this device.',
+  'chat.imageViewer.title': 'Image viewer',
+  'chat.imageViewer.open': 'Open image',
+  'chat.imageViewer.prev': 'Previous',
+  'chat.imageViewer.next': 'Next',
+  'chat.imageViewer.zoomIn': 'Zoom in',
+  'chat.imageViewer.zoomOut': 'Zoom out',
+  'chat.imageViewer.fit': 'Fit',
+  'chat.imageViewer.shortcuts': 'Shortcuts: ← →, +/-, 0',
+  'chat.imageViewer.mimeUnknown': 'image',
+  'turnStats.details': 'Details',
+  'turnStats.timestamp': 'Date & time',
+  'turnStats.title': 'Response metrics',
+  'turnStats.model': 'Model',
+  'turnStats.totalTime': 'Total time',
+  'turnStats.ttft': 'Time to first token',
+  'turnStats.promptTokens': 'Prompt tokens',
+  'turnStats.completionTokens': 'Completion tokens',
+  'turnStats.totalTokens': 'Total tokens',
+  'turnStats.generationSpeed': 'Generation speed',
+  'turnStats.estimated': 'estimated',
+  'turnStats.estimatedShort': 'est.',
+  'turnStats.nanoLead':
+    'The Prompt API does not expose token usage. Prompt and completion values are rough estimates (~4 characters per token; each attached image adds a fixed overhead).',
+  'composer.toolbarAria': 'Attach images, export chat, and view chat summary',
   'composer.mobileIdentityAria': 'Who is speaking in this thread',
   'composer.mobileChipAssistant': 'Assistant',
   'composer.mobileChipYou': 'You',
@@ -190,7 +236,7 @@ Abrí \`chrome://on-device-internals\` para ver el estado de la descarga y regis
   'settings.chatTitleIntervalHelp':
     'Después del primer mensaje tuyo y la respuesta del asistente, Minerva le pide al modelo un título corto para la lista de chats. Si el número es mayor que 0, lo vuelve a pedir cada esa cantidad de mensajes tuyos (por ejemplo 10 → tras los mensajes 1, 11, 21…). Con 0 solo actualiza el título la primera vez.',
   'settings.lead':
-    'Los ajustes se guardan en este navegador. El prompt del sistema se envía al modelo cuando arranca la sesión de un chat.',
+    'Los ajustes y los chats se guardan en IndexedDB en este dispositivo. El prompt del sistema se envía al modelo cuando arranca la sesión de un chat.',
   'settings.navAria': 'Categorías de ajustes',
   'settings.sectionGeneral': 'General',
   'settings.sectionProfile': 'Perfil',
@@ -227,9 +273,11 @@ Reglas:
   'settings.clearAllDataAction': 'Borrar todo',
   'settings.clearedChats': 'Se borraron todos los chats.',
   'settings.clearedAllData': 'Se borró todo lo de Minerva en este navegador.',
-  'settings.localStorageUsageLine': 'Almacenamiento local (aprox.): {pct}%',
-  'settings.localStorageUsageTitle':
-    'Aproximadamente {pct}% de un cupo típico de localStorage por sitio (~{quotaMiB} MiB en muchos navegadores). El límite real puede variar; esto cuenta todas las claves de este sitio.',
+  'settings.storageQuotaLine': 'Almacenamiento: {used} MB en uso · {free} MB libres · {quota} MB de cupo',
+  'settings.storageQuotaTitle':
+    'Estimación de almacenamiento de este sitio: {used} MB en uso, {free} MB libres, {quota} MB de cupo total (navegador; incluye IndexedDB y otros datos persistidos).',
+  'settings.storageQuotaUnavailable': 'No hay estimación de almacenamiento en este entorno.',
+  'settings.storageQuotaUnavailableTitle': 'El navegador no informó detalles del cupo de almacenamiento.',
   'chat.dialog.title': 'Chats',
   'chat.dialog.newChat': 'Chat nuevo',
   'chat.dialog.empty': 'Todavía no hay chats.',
@@ -249,7 +297,52 @@ Reglas:
   'chat.code.download': 'Descargar como archivo',
   'chat.code.copyAria': 'Copiar el código al portapapeles',
   'chat.code.downloadAria': 'Descargar el código como archivo de texto',
-  'composer.toolbarAria': 'Adjuntar imágenes y ver resumen del chat',
+  'chat.export.open': 'Exportar chat…',
+  'chat.export.title': 'Exportar chat',
+  'chat.export.lead':
+    'Elegí un formato. Si el chat tiene imágenes, las descargas en HTML y Markdown van en un ZIP que podés descomprimir y abrir sin conexión.',
+  'chat.export.format': 'Formato',
+  'chat.export.formatHtml': 'HTML (con estilos)',
+  'chat.export.formatMarkdown': 'Markdown',
+  'chat.export.formatPdf': 'PDF',
+  'chat.export.start': 'Descargar',
+  'chat.export.cancel': 'Cancelar',
+  'chat.export.metaExported': 'Exportado',
+  'chat.export.footer': 'Exportado desde Minerva',
+  'chat.export.phase.collecting': 'Preparando…',
+  'chat.export.phase.building': 'Armando el documento…',
+  'chat.export.phase.packaging': 'Creando ZIP…',
+  'chat.export.phase.renderingPdf': 'Generando PDF…',
+  'chat.export.phase.done': 'Listo',
+  'chat.export.phase.cancelled': 'Cancelado',
+  'chat.export.phase.error': 'Algo salió mal',
+  'chat.export.empty': 'Todavía no hay mensajes para exportar.',
+  'chat.export.error': 'No se pudo completar la exportación. Probá de nuevo.',
+  'chat.export.unsupported': 'Ese formato de exportación no está disponible en este dispositivo.',
+  'chat.imageViewer.title': 'Visor de imágenes',
+  'chat.imageViewer.open': 'Abrir imagen',
+  'chat.imageViewer.prev': 'Anterior',
+  'chat.imageViewer.next': 'Siguiente',
+  'chat.imageViewer.zoomIn': 'Acercar',
+  'chat.imageViewer.zoomOut': 'Alejar',
+  'chat.imageViewer.fit': 'Ajustar',
+  'chat.imageViewer.shortcuts': 'Atajos: ← →, +/-, 0',
+  'chat.imageViewer.mimeUnknown': 'imagen',
+  'turnStats.details': 'Detalle',
+  'turnStats.timestamp': 'Fecha y hora',
+  'turnStats.title': 'Métricas de respuesta',
+  'turnStats.model': 'Modelo',
+  'turnStats.totalTime': 'Tiempo total',
+  'turnStats.ttft': 'Tiempo al primer token',
+  'turnStats.promptTokens': 'Tokens de prompt',
+  'turnStats.completionTokens': 'Tokens de respuesta',
+  'turnStats.totalTokens': 'Tokens totales',
+  'turnStats.generationSpeed': 'Velocidad de generación',
+  'turnStats.estimated': 'estimado',
+  'turnStats.estimatedShort': 'est.',
+  'turnStats.nanoLead':
+    'La Prompt API no expone el conteo de tokens. Los valores de prompt y respuesta son estimaciones aproximadas (~4 caracteres por token; cada imagen adjunta suma un overhead fijo).',
+  'composer.toolbarAria': 'Adjuntar imágenes, exportar el chat y ver el resumen',
   'composer.mobileIdentityAria': 'Quién habla en este chat',
   'composer.mobileChipAssistant': 'Asistente',
   'composer.mobileChipYou': 'Tú',
@@ -309,22 +402,3 @@ export function detectBrowserLang(): AppLang {
   return 'en';
 }
 
-export function loadStoredLang(): AppLang {
-  try {
-    const v = (localStorage.getItem(LS_LANG) ?? '').trim();
-    if (v === 'en' || v === 'es' || v === 'es-AR') return v;
-  } catch {
-    /* ignore */
-  }
-  return detectBrowserLang();
-}
-
-export function loadStoredTheme(): ThemeMode {
-  try {
-    const v = (localStorage.getItem(LS_THEME) ?? '').trim();
-    if (v === 'light' || v === 'dark') return v;
-  } catch {
-    /* ignore */
-  }
-  return 'dark';
-}

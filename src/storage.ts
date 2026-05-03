@@ -1,35 +1,42 @@
-import { LS_ACTIVE, LS_SESSIONS, LS_SETTINGS, MSG_PREFIX, messagesKey } from './constants';
-import type { ChatImageAttachment, ChatMessage, ChatSession, LocalSettings } from './types';
+import { detectBrowserLang } from './i18n';
+import type { AppLang, ChatImageAttachment, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
+import { ensureDbReady, getDb, type AppSettingsRow, type PersistedChatMessage } from './db';
+
+function parseNanoTurnStats(raw: unknown): import('./types').NanoTurnStats | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const s = raw as Record<string, unknown>;
+  const modelId = typeof s.modelId === 'string' ? s.modelId.trim() : '';
+  const totalLatencyMs =
+    typeof s.totalLatencyMs === 'number' && Number.isFinite(s.totalLatencyMs) ? s.totalLatencyMs : NaN;
+  if (!modelId || !Number.isFinite(totalLatencyMs)) return undefined;
+  const ttftMs =
+    typeof s.ttftMs === 'number' && Number.isFinite(s.ttftMs) && s.ttftMs >= 0 ? s.ttftMs : undefined;
+  const approxPromptTokenEstimate =
+    typeof s.approxPromptTokenEstimate === 'number' && Number.isFinite(s.approxPromptTokenEstimate)
+      ? Math.max(0, Math.floor(s.approxPromptTokenEstimate))
+      : 0;
+  const approxCompletionTokenEstimate =
+    typeof s.approxCompletionTokenEstimate === 'number' && Number.isFinite(s.approxCompletionTokenEstimate)
+      ? Math.max(0, Math.floor(s.approxCompletionTokenEstimate))
+      : 0;
+  const approxTotalTokenEstimate =
+    typeof s.approxTotalTokenEstimate === 'number' && Number.isFinite(s.approxTotalTokenEstimate)
+      ? Math.max(0, Math.floor(s.approxTotalTokenEstimate))
+      : approxPromptTokenEstimate + approxCompletionTokenEstimate;
+  const genTps =
+    typeof s.genTps === 'number' && Number.isFinite(s.genTps) && s.genTps > 0 ? s.genTps : undefined;
+  return {
+    modelId,
+    totalLatencyMs,
+    ttftMs,
+    approxPromptTokenEstimate,
+    approxCompletionTokenEstimate,
+    approxTotalTokenEstimate,
+    genTps,
+  };
+}
 
 export const DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES = 8;
-
-/** Many browsers use about 5 MiB per origin for `localStorage`; not exposed by API, used only for UI estimates. */
-const LOCAL_STORAGE_TYPICAL_QUOTA_BYTES = 5 * 1024 * 1024;
-
-/** UTF-16 length × 2 per key and value, summed for all keys (common approximation of quota impact). */
-export function getLocalStorageUsageSummary(): {
-  usedBytes: number;
-  /** 0–100 vs the typical ~5 MiB per-origin `localStorage` ceiling used for display. */
-  percentTypical: number;
-  assumedQuotaMiB: number;
-} {
-  let usedBytes = 0;
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k) continue;
-      const v = localStorage.getItem(k) ?? '';
-      usedBytes += (k.length + v.length) * 2;
-    }
-  } catch {
-    /* ignore */
-  }
-  const percentTypical = Math.min(
-    100,
-    Math.round((usedBytes / LOCAL_STORAGE_TYPICAL_QUOTA_BYTES) * 100),
-  );
-  return { usedBytes, percentTypical, assumedQuotaMiB: 5 };
-}
 
 const defaultSettings = (): LocalSettings => ({
   systemPrompt: '',
@@ -44,137 +51,230 @@ function clampTitleInterval(n: unknown): number {
   return DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES;
 }
 
-export function loadSettings(): LocalSettings {
-  try {
-    const raw = localStorage.getItem(LS_SETTINGS);
-    if (!raw?.trim()) return defaultSettings();
-    const j = JSON.parse(raw) as Partial<LocalSettings>;
-    return {
-      systemPrompt: typeof j.systemPrompt === 'string' ? j.systemPrompt : '',
-      preferredName: typeof j.preferredName === 'string' ? j.preferredName : '',
-      chatTitleRefreshEveryUserMessages: clampTitleInterval(j.chatTitleRefreshEveryUserMessages),
-    };
-  } catch {
-    return defaultSettings();
-  }
+function defaultAppRow(): AppSettingsRow {
+  return {
+    key: 'app',
+    localSettings: defaultSettings(),
+    lang: detectBrowserLang(),
+    theme: 'dark',
+    activeSessionId: '',
+  };
 }
 
-export function saveSettings(s: LocalSettings): void {
-  localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
+async function readAppRow(): Promise<AppSettingsRow> {
+  await ensureDbReady();
+  const db = await getDb();
+  const row = await db.get('settings', 'app');
+  if (!row) return defaultAppRow();
+  return {
+    key: 'app',
+    localSettings: {
+      systemPrompt:
+        typeof row.localSettings?.systemPrompt === 'string' ? row.localSettings.systemPrompt : '',
+      preferredName:
+        typeof row.localSettings?.preferredName === 'string' ? row.localSettings.preferredName : '',
+      chatTitleRefreshEveryUserMessages: clampTitleInterval(
+        row.localSettings?.chatTitleRefreshEveryUserMessages,
+      ),
+    },
+    lang: row.lang === 'es' || row.lang === 'es-AR' || row.lang === 'en' ? row.lang : 'en',
+    theme: row.theme === 'light' || row.theme === 'dark' ? row.theme : 'dark',
+    activeSessionId: typeof row.activeSessionId === 'string' ? row.activeSessionId : '',
+  };
 }
 
-export function loadSessions(): ChatSession[] {
-  try {
-    const raw = localStorage.getItem(LS_SESSIONS);
-    if (!raw?.trim()) return [];
-    const arr = JSON.parse(raw) as unknown;
-    if (!Array.isArray(arr)) return [];
-    return arr
-      .map((row): ChatSession | null => {
-        if (!row || typeof row !== 'object') return null;
-        const o = row as Record<string, unknown>;
-        const id = typeof o.id === 'string' ? o.id : '';
-        const title = typeof o.title === 'string' ? o.title : 'Chat';
-        const createdAt = typeof o.createdAt === 'string' ? o.createdAt : new Date().toISOString();
-        const updatedAt = typeof o.updatedAt === 'string' ? o.updatedAt : createdAt;
-        if (!id) return null;
-        return { id, title, createdAt, updatedAt };
-      })
-      .filter((x): x is ChatSession => Boolean(x));
-  } catch {
-    return [];
-  }
+async function writeAppRow(next: AppSettingsRow): Promise<void> {
+  await ensureDbReady();
+  const db = await getDb();
+  await db.put('settings', next);
 }
 
-export function saveSessions(sessions: ChatSession[]): void {
-  localStorage.setItem(LS_SESSIONS, JSON.stringify(sessions));
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return res.blob();
 }
 
-export function loadActiveSessionId(): string {
-  try {
-    return (localStorage.getItem(LS_ACTIVE) ?? '').trim();
-  } catch {
-    return '';
-  }
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error ?? new Error('read failed'));
+    r.readAsDataURL(blob);
+  });
 }
 
-export function saveActiveSessionId(id: string): void {
-  if (id.trim()) localStorage.setItem(LS_ACTIVE, id.trim());
-  else localStorage.removeItem(LS_ACTIVE);
+async function serializeMessage(m: ChatMessage): Promise<PersistedChatMessage> {
+  const base: PersistedChatMessage = {
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    createdAt: m.createdAt,
+    ...(m.nanoTurnStats ? { nanoTurnStats: m.nanoTurnStats } : {}),
+  };
+  if (!m.attachments?.length) return base;
+  const attachments = await Promise.all(
+    m.attachments.map(async (a) => ({
+      id: a.id,
+      name: a.name,
+      mime: a.mime,
+      blob: await dataUrlToBlob(a.dataUrl),
+    })),
+  );
+  return { ...base, attachments };
 }
 
-export function loadMessages(sessionId: string): ChatMessage[] {
-  if (!sessionId.trim()) return [];
-  try {
-    const raw = localStorage.getItem(messagesKey(sessionId));
-    if (!raw?.trim()) return [];
-    const arr = JSON.parse(raw) as unknown;
-    if (!Array.isArray(arr)) return [];
-    return arr
-      .map((row): ChatMessage | null => {
-        if (!row || typeof row !== 'object') return null;
-        const o = row as Record<string, unknown>;
-        const id = typeof o.id === 'string' ? o.id : '';
-        const role =
-          o.role === 'user' || o.role === 'assistant' || o.role === 'system' ? o.role : null;
-        const content = typeof o.content === 'string' ? o.content : '';
-        const createdAt = typeof o.createdAt === 'string' ? o.createdAt : new Date().toISOString();
-        let attachments: ChatImageAttachment[] | undefined;
-        const rawAtt = o.attachments;
-        if (Array.isArray(rawAtt) && rawAtt.length) {
-          const parsed: ChatImageAttachment[] = [];
-          for (const a of rawAtt) {
-            if (!a || typeof a !== 'object') continue;
-            const ao = a as Record<string, unknown>;
-            const aid = typeof ao.id === 'string' ? ao.id : '';
-            const name = typeof ao.name === 'string' ? ao.name : '';
-            const dataUrl = typeof ao.dataUrl === 'string' ? ao.dataUrl : '';
-            if (!aid || !dataUrl.startsWith('data:')) continue;
-            const mime = typeof ao.mime === 'string' ? ao.mime : undefined;
-            parsed.push({ id: aid, name: name || 'image', mime, dataUrl });
-          }
-          if (parsed.length) attachments = parsed;
-        }
-        if (!id || !role) return null;
-        return { id, role, content, createdAt, ...(attachments ? { attachments } : {}) };
-      })
-      .filter((x): x is ChatMessage => Boolean(x));
-  } catch {
-    return [];
-  }
-}
-
-export function saveMessages(sessionId: string, messages: ChatMessage[]): void {
-  if (!sessionId.trim()) return;
-  localStorage.setItem(messagesKey(sessionId), JSON.stringify(messages));
-}
-
-/** True when the thread has at least one user message (eligible for the chat list). */
-export function sessionHasUserMessage(sessionId: string): boolean {
-  if (!sessionId.trim()) return false;
-  return loadMessages(sessionId).some((m) => m.role === 'user');
-}
-
-export function wipeAllMessageKeys(): void {
-  try {
-    const keys: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(MSG_PREFIX)) keys.push(k);
+async function deserializeMessage(pm: PersistedChatMessage): Promise<ChatMessage> {
+  let attachments: ChatImageAttachment[] | undefined;
+  if (pm.attachments?.length) {
+    const parsed: ChatImageAttachment[] = [];
+    for (const a of pm.attachments) {
+      if (!a?.blob || typeof a.id !== 'string' || typeof a.name !== 'string') continue;
+      const dataUrl = await blobToDataUrl(a.blob);
+      if (!dataUrl.startsWith('data:')) continue;
+      parsed.push({
+        id: a.id,
+        name: a.name || 'image',
+        mime: typeof a.mime === 'string' ? a.mime : undefined,
+        dataUrl,
+      });
     }
-    for (const k of keys) localStorage.removeItem(k);
-  } catch {
-    /* ignore */
+    if (parsed.length) attachments = parsed;
   }
+  const nanoTurnStats = pm.role === 'assistant' ? parseNanoTurnStats(pm.nanoTurnStats) : undefined;
+  return {
+    id: pm.id,
+    role: pm.role,
+    content: typeof pm.content === 'string' ? pm.content : '',
+    createdAt: typeof pm.createdAt === 'string' ? pm.createdAt : new Date().toISOString(),
+    ...(attachments ? { attachments } : {}),
+    ...(nanoTurnStats ? { nanoTurnStats } : {}),
+  };
 }
 
-export function clearAllPersistence(): void {
-  wipeAllMessageKeys();
-  try {
-    localStorage.removeItem(LS_SESSIONS);
-    localStorage.removeItem(LS_ACTIVE);
-    localStorage.removeItem(LS_SETTINGS);
-  } catch {
-    /* ignore */
+export async function loadSettings(): Promise<LocalSettings> {
+  const row = await readAppRow();
+  return row.localSettings;
+}
+
+export async function saveSettings(s: LocalSettings): Promise<void> {
+  const prev = await readAppRow();
+  await writeAppRow({ ...prev, localSettings: s });
+}
+
+export async function loadAppPrefs(): Promise<{ lang: AppLang; theme: ThemeMode }> {
+  const row = await readAppRow();
+  return { lang: row.lang, theme: row.theme };
+}
+
+export async function saveAppPrefsLang(lang: AppLang): Promise<void> {
+  const prev = await readAppRow();
+  await writeAppRow({ ...prev, lang });
+}
+
+export async function saveAppPrefsTheme(theme: ThemeMode): Promise<void> {
+  const prev = await readAppRow();
+  await writeAppRow({ ...prev, theme });
+}
+
+export async function loadActiveSessionId(): Promise<string> {
+  const row = await readAppRow();
+  return row.activeSessionId.trim();
+}
+
+export async function saveActiveSessionId(id: string): Promise<void> {
+  const prev = await readAppRow();
+  await writeAppRow({
+    ...prev,
+    activeSessionId: id.trim(),
+  });
+}
+
+export async function loadSessions(): Promise<ChatSession[]> {
+  await ensureDbReady();
+  const db = await getDb();
+  const rows = await db.getAll('chats');
+  return rows
+    .map((r) => ({
+      ...r.session,
+      hasUserMessage: Boolean(r.hasUserMessage),
+    }))
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+export async function saveSessions(sessions: ChatSession[]): Promise<void> {
+  await ensureDbReady();
+  const db = await getDb();
+  const keep = new Set(sessions.map((s) => s.id));
+  const existing = await db.getAll('chats');
+  const prevById = new Map(existing.map((r) => [r.sessionId, r]));
+  const tx = db.transaction('chats', 'readwrite');
+  for (const r of existing) {
+    if (!keep.has(r.sessionId)) {
+      await tx.store.delete(r.sessionId);
+    }
   }
+  for (const s of sessions) {
+    const prev = prevById.get(s.id);
+    const { hasUserMessage: _drop, ...sessionOnly } = s as ChatSession & { hasUserMessage?: boolean };
+    await tx.store.put({
+      sessionId: s.id,
+      session: sessionOnly,
+      messages: prev?.messages ?? [],
+      hasUserMessage: prev?.hasUserMessage ?? false,
+    });
+  }
+  await tx.done;
+}
+
+export async function loadMessages(sessionId: string): Promise<ChatMessage[]> {
+  if (!sessionId.trim()) return [];
+  await ensureDbReady();
+  const db = await getDb();
+  const row = await db.get('chats', sessionId);
+  if (!row?.messages?.length) return [];
+  return Promise.all(row.messages.map(deserializeMessage));
+}
+
+export async function saveMessages(sessionId: string, messages: ChatMessage[]): Promise<void> {
+  if (!sessionId.trim()) return;
+  await ensureDbReady();
+  const db = await getDb();
+  const prev = await db.get('chats', sessionId);
+  const persisted = await Promise.all(messages.map(serializeMessage));
+  const hasUserMessage = messages.some((m) => m.role === 'user');
+  const sessionBase: ChatSession =
+    prev?.session ??
+    ({
+      id: sessionId,
+      title: 'Chat',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as ChatSession);
+  await db.put('chats', {
+    sessionId,
+    session: { ...sessionBase, updatedAt: new Date().toISOString() },
+    messages: persisted,
+    hasUserMessage,
+  });
+}
+
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  if (!sessionId.trim()) return;
+  await ensureDbReady();
+  const db = await getDb();
+  await db.delete('chats', sessionId);
+}
+
+/** Removes every chat thread and resets the active session id in settings (does not clear local settings text). */
+export async function wipeAllChatThreads(): Promise<void> {
+  await ensureDbReady();
+  const db = await getDb();
+  const keys = await db.getAllKeys('chats');
+  const tx = db.transaction('chats', 'readwrite');
+  for (const k of keys) {
+    await tx.store.delete(k);
+  }
+  await tx.done;
+  const prev = await readAppRow();
+  await writeAppRow({ ...prev, activeSessionId: '' });
 }

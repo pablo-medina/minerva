@@ -4,10 +4,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
+  type DragEvent,
   type KeyboardEvent,
 } from 'react';
-import { LS_LANG, LS_THEME, messagesKey } from './constants';
-import { createTranslator, loadStoredLang, loadStoredTheme } from './i18n';
+import { createTranslator, detectBrowserLang } from './i18n';
 import { modelLabelForSession } from './modelLabel';
 import {
   LM_CORE,
@@ -18,16 +19,19 @@ import {
 } from './promptApi';
 import {
   DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
+  deleteChatSession,
   loadActiveSessionId,
+  loadAppPrefs,
   loadMessages,
   loadSessions,
   loadSettings,
   saveActiveSessionId,
+  saveAppPrefsLang,
+  saveAppPrefsTheme,
   saveMessages,
   saveSessions,
   saveSettings,
-  sessionHasUserMessage,
-  wipeAllMessageKeys,
+  wipeAllChatThreads,
 } from './storage';
 import { fingerprintForChatSummaryCache, summarizeChatMessages } from './chatSummary';
 import { generateChatTitleWithOnDeviceModel, shouldRefreshChatTitle } from './chatTitleAi';
@@ -36,10 +40,17 @@ import {
   defaultSessionSystemContext,
   resolveApproximateLocation,
 } from './sessionSystemPrompt';
+import { buildNanoTurnStats } from './nanoTurnStats';
 import type { AppLang, ChatImageAttachment, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
+import { ChatExportDialog } from './components/ChatExportDialog';
+import { ImageViewerDialog } from './components/ImageViewerDialog';
+import { NanoTurnStatsFooter } from './components/NanoTurnStatsFooter';
+import { formatBytes, estimateDataUrlBytes } from './chatExportHelpers';
+import { collectChatImagesInOrder, indexOfAttachmentInChat } from './util/collectChatImages';
 import { MAX_CHAT_IMAGE_ATTACHMENTS, MAX_CHAT_IMAGE_BYTES } from './chatAttachmentConstants';
 import {
   closeImageBitmaps,
+  collectPastedImageFilesFromClipboard,
   dataUrlToImageBitmap,
   fileToImageAttachment,
   formatImageSizeLimitLabel,
@@ -47,7 +58,7 @@ import {
   threadUsesImageInputs,
 } from './chatImageAttachments';
 import { AiActionIcon } from './components/AiActionIcon';
-import { LocalStorageFootprintHint } from './components/LocalStorageFootprintHint';
+import { StorageQuotaHint } from './components/StorageQuotaHint';
 import { ChatMarkdown } from './components/ChatMarkdown';
 import { DraggableDialog } from './components/DraggableDialog';
 import { MessageDialog } from './components/MessageDialog';
@@ -85,14 +96,22 @@ async function consumeTextStream(
   stream: ReadableStream<string>,
   onDelta: (chunk: string) => void,
   signal: AbortSignal,
+  onFirstChunk?: () => void,
 ): Promise<void> {
   const reader = stream.getReader();
+  let first = true;
   try {
     for (;;) {
       if (signal.aborted) break;
       const { done, value } = await reader.read();
       if (done) break;
-      if (value) onDelta(value);
+      if (value) {
+        if (first && value.length > 0 && onFirstChunk) {
+          first = false;
+          onFirstChunk();
+        }
+        onDelta(value);
+      }
     }
   } finally {
     reader.releaseLock();
@@ -146,6 +165,22 @@ function IconChatSummary({ size = 18 }: { size?: number }) {
   );
 }
 
+/** Download / export to file (arrow into tray — distinct from upload). */
+function IconExportChat({ size = 17 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M12 5v10m0 0l-4-4m4 4l4-4M5 19h14"
+      />
+    </svg>
+  );
+}
+
 function HelpCircleIcon() {
   return (
     <svg className="side-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -161,8 +196,8 @@ type Gate = 'loading' | 'unsupported' | 'blocked' | 'ready';
 
 export function App() {
   const [gate, setGate] = useState<Gate>('loading');
-  const [lang, setLang] = useState<AppLang>(loadStoredLang);
-  const [theme, setTheme] = useState<ThemeMode>(loadStoredTheme);
+  const [lang, setLang] = useState<AppLang>(() => detectBrowserLang());
+  const [theme, setTheme] = useState<ThemeMode>('dark');
   const [howToOpen, setHowToOpen] = useState(false);
 
   const t = useMemo(() => createTranslator(lang), [lang]);
@@ -184,20 +219,19 @@ export function App() {
   }, [recheckGate]);
 
   useEffect(() => {
+    void loadAppPrefs().then((p) => {
+      setLang(p.lang);
+      setTheme(p.theme);
+    });
+  }, []);
+
+  useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    try {
-      localStorage.setItem(LS_THEME, theme);
-    } catch {
-      /* ignore */
-    }
+    void saveAppPrefsTheme(theme);
   }, [theme]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(LS_LANG, lang);
-    } catch {
-      /* ignore */
-    }
+    void saveAppPrefsLang(lang);
   }, [lang]);
 
   if (gate === 'loading') {
@@ -297,15 +331,19 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatsOpen, setChatsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
-  const [activeSessionId, setActiveSessionId] = useState(() => loadActiveSessionId());
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState('');
   const activeSessionIdRef = useRef(activeSessionId);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloadPct, setDownloadPct] = useState<number | null>(null);
-  const [settingsDraft, setSettingsDraft] = useState<LocalSettings>(() => loadSettings());
+  const [settingsDraft, setSettingsDraft] = useState<LocalSettings>({
+    systemPrompt: '',
+    preferredName: '',
+    chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
+  });
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [modelUiName, setModelUiName] = useState(() => modelLabelForSession(null, t));
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -322,6 +360,9 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('general');
   const [imageInputSupported, setImageInputSupported] = useState(false);
   const [pendingImages, setPendingImages] = useState<ChatImageAttachment[]>([]);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [imageViewerOpen, setImageViewerOpen] = useState(false);
+  const [imageViewerInitial, setImageViewerInitial] = useState(0);
 
   const nanoLmRuntimeOk = useMemo(() => languageModelSupported(), []);
 
@@ -335,29 +376,34 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const prevBusyRef = useRef(false);
 
-  const bootstrapSessions = useCallback(() => {
-    let list = loadSessions();
-    let active = loadActiveSessionId();
+  const bootstrapSessions = useCallback(async () => {
+    let list = await loadSessions();
+    let active = await loadActiveSessionId();
     if (!list.length) {
       const id = makeId();
       const now = isoNow();
-      list = [{ id, title: t('defaultChatTitle'), createdAt: now, updatedAt: now }];
-      saveSessions(list);
-      saveMessages(id, []);
-      saveActiveSessionId(id);
+      list = [{ id, title: t('defaultChatTitle'), createdAt: now, updatedAt: now, hasUserMessage: false }];
+      await saveSessions(list);
+      await saveMessages(id, []);
+      await saveActiveSessionId(id);
       active = id;
     } else if (!active || !list.some((s) => s.id === active)) {
       active = list[0]!.id;
-      saveActiveSessionId(active);
+      await saveActiveSessionId(active);
     }
     setSessions(list);
     setActiveSessionId(active);
   }, [t]);
 
   useEffect(() => {
-    bootstrapSessions();
+    void bootstrapSessions();
   }, [bootstrapSessions]);
+
+  useEffect(() => {
+    void loadSettings().then(setSettingsDraft);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -377,11 +423,47 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
 
+  /** After the model finishes (or streaming stops), return focus to the composer on desktop. */
+  useEffect(() => {
+    const wasBusy = prevBusyRef.current;
+    prevBusyRef.current = busy;
+    if (!wasBusy || busy) return;
+    if (!shouldAutoFocusComposerInput()) return;
+    queueMicrotask(() => {
+      const el = inputRef.current;
+      if (el && !el.disabled) el.focus();
+    });
+  }, [busy]);
+
+  useEffect(() => {
+    if (busy) setComposerImageDropHover(false);
+  }, [busy]);
+
   useEffect(() => {
     if (!activeSessionId) return;
-    setMessages(loadMessages(activeSessionId));
+    let cancelled = false;
+    void loadMessages(activeSessionId).then((m) => {
+      if (!cancelled) setMessages(m);
+    });
     setPendingImages([]);
+    setImageViewerOpen(false);
+    setExportOpen(false);
+    return () => {
+      cancelled = true;
+    };
   }, [activeSessionId]);
+
+  const viewerImages = useMemo(() => collectChatImagesInOrder(messages), [messages]);
+
+  const openAttachmentViewer = useCallback(
+    (att: ChatImageAttachment) => {
+      const all = collectChatImagesInOrder(messages);
+      if (!all.length) return;
+      setImageViewerInitial(indexOfAttachmentInChat(all, att));
+      setImageViewerOpen(true);
+    },
+    [messages],
+  );
 
   useEffect(() => {
     setModelUiName(modelLabelForSession(lmRef.current, t));
@@ -396,18 +478,13 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     setModelUiName(modelLabelForSession(null, t));
     const sid = activeSessionId;
     if (!sid) return undefined;
-    const msgs = loadMessages(sid);
-    const settings = loadSettings();
-    if (!msgs.length) {
-      return () => {
-        cancelled = true;
-        lmRef.current?.destroy();
-        lmRef.current = null;
-        lmUsesImagesRef.current = false;
-        setModelUiName(modelLabelForSession(null, t));
-      };
-    }
+
     void (async () => {
+      const [msgs, settings] = await Promise.all([loadMessages(sid), loadSettings()]);
+      if (cancelled) return;
+      if (!msgs.length) {
+        return;
+      }
       try {
         const geo = await resolveApproximateLocation(2600);
         const ctx = defaultSessionSystemContext(lang, geo);
@@ -440,6 +517,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         }
       }
     })();
+
     return () => {
       cancelled = true;
       lmRef.current?.destroy();
@@ -460,58 +538,63 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     [],
   );
 
-  const persistSessionMeta = useCallback((next: ChatSession[]) => {
-    saveSessions(next);
+  const persistSessionMeta = useCallback(async (next: ChatSession[]) => {
+    await saveSessions(next);
     setSessions(next);
   }, []);
 
-  const persistMessages = useCallback((sid: string, next: ChatMessage[]) => {
-    saveMessages(sid, next);
+  const persistMessages = useCallback(async (sid: string, next: ChatMessage[]) => {
+    await saveMessages(sid, next);
     setMessages(next);
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sid ? { ...s, hasUserMessage: next.some((m) => m.role === 'user') } : s,
+      ),
+    );
   }, []);
 
   const openNewChat = useCallback(() => {
-    const id = makeId();
-    const now = isoNow();
-    const row: ChatSession = {
-      id,
-      title: t('defaultChatTitle'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    setSessions((prev) => {
+    void (async () => {
+      const id = makeId();
+      const now = isoNow();
+      const row: ChatSession = {
+        id,
+        title: t('defaultChatTitle'),
+        createdAt: now,
+        updatedAt: now,
+        hasUserMessage: false,
+      };
+      const prev = sessions;
       for (const s of prev) {
-        if (!sessionHasUserMessage(s.id)) {
-          try {
-            localStorage.removeItem(messagesKey(s.id));
-          } catch {
-            /* ignore */
-          }
+        if (!s.hasUserMessage) {
+          await deleteChatSession(s.id);
         }
       }
-      const kept = prev.filter((s) => sessionHasUserMessage(s.id));
+      const kept = prev.filter((s) => s.hasUserMessage === true);
       const next = [row, ...kept];
-      saveSessions(next);
-      return next;
-    });
-    saveMessages(id, []);
-    saveActiveSessionId(id);
-    setActiveSessionId(id);
-    setChatsOpen(false);
-    setSettingsOpen(false);
-    setError(null);
-    setPendingImages([]);
-    queueMicrotask(() => {
-      if (shouldAutoFocusComposerInput()) inputRef.current?.focus();
-    });
-  }, [t]);
+      await saveSessions(next);
+      await saveMessages(id, []);
+      await saveActiveSessionId(id);
+      setSessions(next);
+      setActiveSessionId(id);
+      setChatsOpen(false);
+      setSettingsOpen(false);
+      setError(null);
+      setPendingImages([]);
+      queueMicrotask(() => {
+        if (shouldAutoFocusComposerInput()) inputRef.current?.focus();
+      });
+    })();
+  }, [sessions, t]);
 
   const selectSession = useCallback(
     (id: string) => {
       if (!id || id === activeSessionId) return;
-      saveActiveSessionId(id);
-      setActiveSessionId(id);
-      setError(null);
+      void (async () => {
+        await saveActiveSessionId(id);
+        setActiveSessionId(id);
+        setError(null);
+      })();
     },
     [activeSessionId],
   );
@@ -526,110 +609,114 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     setConfirmDeleteOpen(false);
     setPendingDeleteId(null);
     if (!id) return;
-    const next = sessions.filter((s) => s.id !== id);
-    if (!next.length) {
-      try {
-        localStorage.removeItem(messagesKey(id));
-      } catch {
-        /* ignore */
-      }
+    void (async () => {
+      const next = sessions.filter((s) => s.id !== id);
+      await deleteChatSession(id);
       for (const k of [...summaryCacheRef.current.keys()]) {
         if (k.startsWith(`${id}|`)) summaryCacheRef.current.delete(k);
       }
-      const nid = makeId();
-      const now = isoNow();
-      const row: ChatSession = { id: nid, title: t('defaultChatTitle'), createdAt: now, updatedAt: now };
-      persistSessionMeta([row]);
-      saveMessages(nid, []);
-      saveActiveSessionId(nid);
-      setActiveSessionId(nid);
-      return;
-    }
-    try {
-      localStorage.removeItem(messagesKey(id));
-    } catch {
-      /* ignore */
-    }
-    for (const k of [...summaryCacheRef.current.keys()]) {
-      if (k.startsWith(`${id}|`)) summaryCacheRef.current.delete(k);
-    }
-    persistSessionMeta(next);
-    if (activeSessionId === id) {
-      const first = next[0]!.id;
-      saveActiveSessionId(first);
-      setActiveSessionId(first);
-    }
+      if (!next.length) {
+        const nid = makeId();
+        const now = isoNow();
+        const row: ChatSession = {
+          id: nid,
+          title: t('defaultChatTitle'),
+          createdAt: now,
+          updatedAt: now,
+          hasUserMessage: false,
+        };
+        await persistSessionMeta([row]);
+        await saveMessages(nid, []);
+        await saveActiveSessionId(nid);
+        setActiveSessionId(nid);
+        return;
+      }
+      await persistSessionMeta(next);
+      if (activeSessionId === id) {
+        const first = next[0]!.id;
+        await saveActiveSessionId(first);
+        setActiveSessionId(first);
+      }
+    })();
   }, [activeSessionId, pendingDeleteId, persistSessionMeta, sessions, t]);
 
   const saveSettingsClick = useCallback(() => {
-    const clamped: LocalSettings = {
-      ...settingsDraft,
-      chatTitleRefreshEveryUserMessages: Math.min(
-        500,
-        Math.max(
-          0,
-          Math.floor(
-            Number.isFinite(settingsDraft.chatTitleRefreshEveryUserMessages)
-              ? settingsDraft.chatTitleRefreshEveryUserMessages
-              : DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
+    void (async () => {
+      const clamped: LocalSettings = {
+        ...settingsDraft,
+        chatTitleRefreshEveryUserMessages: Math.min(
+          500,
+          Math.max(
+            0,
+            Math.floor(
+              Number.isFinite(settingsDraft.chatTitleRefreshEveryUserMessages)
+                ? settingsDraft.chatTitleRefreshEveryUserMessages
+                : DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
+            ),
           ),
         ),
-      ),
-    };
-    saveSettings(clamped);
-    setSettingsDraft(clamped);
-    setSettingsNotice(t('settings.saved'));
-    lmRef.current?.destroy();
-    lmRef.current = null;
-    lmUsesImagesRef.current = false;
+      };
+      await saveSettings(clamped);
+      setSettingsDraft(clamped);
+      setSettingsNotice(t('settings.saved'));
+      lmRef.current?.destroy();
+      lmRef.current = null;
+      lmUsesImagesRef.current = false;
+    })();
   }, [settingsDraft, t]);
 
-  const resetToFreshSingleChat = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    lmRef.current?.destroy();
-    lmRef.current = null;
-    lmUsesImagesRef.current = false;
-    wipeAllMessageKeys();
-    const id = makeId();
-    const now = isoNow();
-    const row: ChatSession = {
-      id,
-      title: t('defaultChatTitle'),
-      createdAt: now,
-      updatedAt: now,
-    };
-    summaryCacheRef.current.clear();
-    saveSessions([row]);
-    saveMessages(id, []);
-    saveActiveSessionId(id);
-    setSessions([row]);
-    setActiveSessionId(id);
-    setMessages([]);
-    setPendingImages([]);
-    setChatsOpen(false);
-    setSettingsOpen(false);
-    setError(null);
+  const resetToFreshSingleChat = useCallback((): Promise<void> => {
+    return (async () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      lmRef.current?.destroy();
+      lmRef.current = null;
+      lmUsesImagesRef.current = false;
+      await wipeAllChatThreads();
+      const id = makeId();
+      const now = isoNow();
+      const row: ChatSession = {
+        id,
+        title: t('defaultChatTitle'),
+        createdAt: now,
+        updatedAt: now,
+        hasUserMessage: false,
+      };
+      summaryCacheRef.current.clear();
+      await saveSessions([row]);
+      await saveMessages(id, []);
+      await saveActiveSessionId(id);
+      setSessions([row]);
+      setActiveSessionId(id);
+      setMessages([]);
+      setPendingImages([]);
+      setChatsOpen(false);
+      setSettingsOpen(false);
+      setError(null);
+    })();
   }, [t]);
 
   const runClearAllChats = useCallback(() => {
     setConfirmClearChatsOpen(false);
-    resetToFreshSingleChat();
-    setSettingsNotice(t('settings.clearedChats'));
+    void resetToFreshSingleChat().then(() => setSettingsNotice(t('settings.clearedChats')));
   }, [resetToFreshSingleChat, t]);
 
   const runClearAllData = useCallback(() => {
     setConfirmClearAllDataOpen(false);
-    resetToFreshSingleChat();
-    const empty: LocalSettings = {
-      systemPrompt: '',
-      preferredName: '',
-      chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
-    };
-    saveSettings(empty);
-    setSettingsDraft(empty);
-    setSettingsNotice(t('settings.clearedAllData'));
+    void (async () => {
+      await resetToFreshSingleChat();
+      const empty: LocalSettings = {
+        systemPrompt: '',
+        preferredName: '',
+        chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
+      };
+      await saveSettings(empty);
+      setSettingsDraft(empty);
+      setSettingsNotice(t('settings.clearedAllData'));
+    })();
   }, [resetToFreshSingleChat, t]);
+
+  const [composerImageDropHover, setComposerImageDropHover] = useState(false);
 
   const addImageFiles = useCallback(
     async (list: FileList | null) => {
@@ -669,6 +756,58 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     [imageInputSupported, pendingImages.length, t],
   );
 
+  const dataTransferHasFiles = useCallback((dt: DataTransfer | null) => {
+    if (!dt?.types) return false;
+    try {
+      return Array.from(dt.types as unknown as string[]).includes('Files');
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const onComposerDragEnter = useCallback(
+    (e: DragEvent<HTMLFormElement>) => {
+      if (!imageInputSupported || !activeSessionId) return;
+      if (!dataTransferHasFiles(e.dataTransfer)) return;
+      if (!busy) setComposerImageDropHover(true);
+    },
+    [activeSessionId, busy, dataTransferHasFiles, imageInputSupported],
+  );
+
+  const onComposerDragLeave = useCallback((e: DragEvent<HTMLFormElement>) => {
+    const related = e.relatedTarget as Node | null;
+    if (related && e.currentTarget.contains(related)) return;
+    setComposerImageDropHover(false);
+  }, []);
+
+  const onComposerDragOver = useCallback(
+    (e: DragEvent<HTMLFormElement>) => {
+      if (!imageInputSupported || !activeSessionId) return;
+      if (!dataTransferHasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      try {
+        e.dataTransfer.dropEffect = busy ? 'none' : 'copy';
+      } catch {
+        /* ignore */
+      }
+    },
+    [activeSessionId, busy, dataTransferHasFiles, imageInputSupported],
+  );
+
+  const onComposerDrop = useCallback(
+    (e: DragEvent<HTMLFormElement>) => {
+      setComposerImageDropHover(false);
+      if (!imageInputSupported || !activeSessionId) return;
+      if (!dataTransferHasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      if (busy) return;
+      const { files } = e.dataTransfer;
+      if (!files?.length) return;
+      void addImageFiles(files);
+    },
+    [activeSessionId, addImageFiles, busy, dataTransferHasFiles, imageInputSupported],
+  );
+
   const send = useCallback(async () => {
     if (!nanoLmRuntimeOk) return;
     const text = input.trim();
@@ -682,7 +821,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     setPendingImages([]);
     setError(null);
     setBusy(true);
-    const settings = loadSettings();
+    const settings = await loadSettings();
     const userDisplay =
       text ||
       t('chat.internal.userAttachmentsLine')
@@ -697,13 +836,13 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     };
     const prior = messages;
     const nextMsgs = [...prior, userMsg];
-    persistMessages(activeSessionId, nextMsgs);
+    await persistMessages(activeSessionId, nextMsgs);
     setSessions((prev) => {
       const nextSess = prev.map((s) => {
         if (s.id !== activeSessionId) return s;
-        return { ...s, updatedAt: isoNow() };
+        return { ...s, updatedAt: isoNow(), hasUserMessage: true };
       });
-      saveSessions(nextSess);
+      void saveSessions(nextSess);
       return nextSess;
     });
     const assistantId = makeId();
@@ -713,7 +852,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       content: '',
       createdAt: isoNow(),
     };
-    persistMessages(activeSessionId, [...nextMsgs, assistantShell]);
+    await persistMessages(activeSessionId, [...nextMsgs, assistantShell]);
 
     const ac = new AbortController();
     abortRef.current = ac;
@@ -759,6 +898,11 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       if (!session) {
         throw new Error('error.noLm');
       }
+      const startedAt = performance.now();
+      let firstTokenAt: number | null = null;
+      const markFirstChunk = () => {
+        if (firstTokenAt == null) firstTokenAt = performance.now();
+      };
       let acc = '';
       if (pending.length === 0) {
         const stream = session.promptStreaming(text, { signal: ac.signal });
@@ -768,11 +912,12 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
             acc += chunk;
             setMessages((prev) => {
               const out = prev.map((m) => (m.id === assistantId ? { ...m, content: acc } : m));
-              saveMessages(activeSessionId, out);
+              void saveMessages(activeSessionId, out);
               return out;
             });
           },
           ac.signal,
+          markFirstChunk,
         );
       } else {
         const parts: LanguageModelMessageContent[] = [{ type: 'text', value: modelText }];
@@ -789,14 +934,30 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
             acc += chunk;
             setMessages((prev) => {
               const out = prev.map((m) => (m.id === assistantId ? { ...m, content: acc } : m));
-              saveMessages(activeSessionId, out);
+              void saveMessages(activeSessionId, out);
               return out;
             });
           },
           ac.signal,
+          markFirstChunk,
         );
       }
-      const finalThread: ChatMessage[] = [...nextMsgs, { ...assistantShell, content: acc }];
+      const finishedAt = performance.now();
+      const stats = buildNanoTurnStats({
+        modelId: modelLabelForSession(session, t),
+        startedAt,
+        finishedAt,
+        firstTokenAt,
+        outputText: acc,
+        contextMessages: nextMsgs,
+      });
+      const assistantFinal: ChatMessage = { ...assistantShell, content: acc, nanoTurnStats: stats };
+      setMessages((prev) => {
+        const out = prev.map((m) => (m.id === assistantId ? assistantFinal : m));
+        void saveMessages(activeSessionId, out);
+        return out;
+      });
+      const finalThread: ChatMessage[] = [...nextMsgs, assistantFinal];
       const userCount = nextMsgs.filter((m) => m.role === 'user').length;
       const interval = settings.chatTitleRefreshEveryUserMessages;
       if (shouldRefreshChatTitle(userCount, interval)) {
@@ -816,7 +977,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
               const nextSess = prev.map((s) =>
                 s.id === sid ? { ...s, title: newTitle, updatedAt: isoNow() } : s,
               );
-              saveSessions(nextSess);
+              void saveSessions(nextSess);
               return nextSess;
             });
           })
@@ -831,7 +992,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       if (aborted) {
         setMessages((prev) => {
           const out = prev.filter((m) => m.id !== assistantId);
-          saveMessages(activeSessionId, out);
+          void saveMessages(activeSessionId, out);
           return out;
         });
       } else {
@@ -840,7 +1001,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         setError(t(key));
         setMessages((prev) => {
           const out = prev.filter((m) => m.id !== assistantId);
-          saveMessages(activeSessionId, out);
+          void saveMessages(activeSessionId, out);
           return out;
         });
       }
@@ -881,57 +1042,60 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   }, []);
 
   const openChatSummary = useCallback(
-    (sessionId: string, sessionLabel: string, msgs: ChatMessage[]) => {
-      summaryAbortRef.current?.abort();
-      if (!msgs.some((m) => m.role === 'user')) {
-        summaryAbortRef.current = null;
+    (sessionId: string, sessionLabel: string, msgsOverride?: ChatMessage[]) => {
+      void (async () => {
+        const msgs = msgsOverride ?? (await loadMessages(sessionId));
+        summaryAbortRef.current?.abort();
+        if (!msgs.some((m) => m.role === 'user')) {
+          summaryAbortRef.current = null;
+          setSummarySessionLabel(sessionLabel);
+          setSummaryOpen(true);
+          setSummaryInFlight(false);
+          setSummaryBody('');
+          setSummaryError(t('chat.summary.empty'));
+          return;
+        }
+        const fp = fingerprintForChatSummaryCache(msgs);
+        const cacheKey = `${sessionId}|${lang}`;
+        const cached = sessionId ? summaryCacheRef.current.get(cacheKey) : undefined;
+        if (cached && cached.fp === fp && cached.body.trim()) {
+          summaryAbortRef.current = null;
+          setSummarySessionLabel(sessionLabel);
+          setSummaryOpen(true);
+          setSummaryInFlight(false);
+          setSummaryBody(cached.body);
+          setSummaryError(null);
+          return;
+        }
+        const ac = new AbortController();
+        summaryAbortRef.current = ac;
         setSummarySessionLabel(sessionLabel);
         setSummaryOpen(true);
-        setSummaryInFlight(false);
+        setSummaryInFlight(true);
         setSummaryBody('');
-        setSummaryError(t('chat.summary.empty'));
-        return;
-      }
-      const fp = fingerprintForChatSummaryCache(msgs);
-      const cacheKey = `${sessionId}|${lang}`;
-      const cached = sessionId ? summaryCacheRef.current.get(cacheKey) : undefined;
-      if (cached && cached.fp === fp && cached.body.trim()) {
-        summaryAbortRef.current = null;
-        setSummarySessionLabel(sessionLabel);
-        setSummaryOpen(true);
-        setSummaryInFlight(false);
-        setSummaryBody(cached.body);
         setSummaryError(null);
-        return;
-      }
-      const ac = new AbortController();
-      summaryAbortRef.current = ac;
-      setSummarySessionLabel(sessionLabel);
-      setSummaryOpen(true);
-      setSummaryInFlight(true);
-      setSummaryBody('');
-      setSummaryError(null);
-      void summarizeChatMessages({
-        lang,
-        messages: msgs,
-        signal: ac.signal,
-        onDelta: (partial) => {
-          setSummaryBody(partial);
-        },
-      })
-        .then((full) => {
-          if (ac.signal.aborted) return;
-          if (full) {
-            setSummaryBody(full);
-            if (sessionId) summaryCacheRef.current.set(cacheKey, { fp, body: full });
-          } else {
-            setSummaryBody('');
-            setSummaryError(t('chat.summary.error'));
-          }
+        void summarizeChatMessages({
+          lang,
+          messages: msgs,
+          signal: ac.signal,
+          onDelta: (partial) => {
+            setSummaryBody(partial);
+          },
         })
-        .finally(() => {
-          if (!ac.signal.aborted) setSummaryInFlight(false);
-        });
+          .then((full) => {
+            if (ac.signal.aborted) return;
+            if (full) {
+              setSummaryBody(full);
+              if (sessionId) summaryCacheRef.current.set(cacheKey, { fp, body: full });
+            } else {
+              setSummaryBody('');
+              setSummaryError(t('chat.summary.error'));
+            }
+          })
+          .finally(() => {
+            if (!ac.signal.aborted) setSummaryInFlight(false);
+          });
+      })();
     },
     [lang, t],
   );
@@ -999,7 +1163,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   );
 
   const listableSessions = useMemo(
-    () => sessions.filter((s) => sessionHasUserMessage(s.id)),
+    () => sessions.filter((s) => s.hasUserMessage === true),
     [sessions],
   );
 
@@ -1029,6 +1193,21 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       }
     },
     [canSendMessage, send],
+  );
+
+  const onComposerPaste = useCallback(
+    (e: ClipboardEvent<HTMLTextAreaElement>) => {
+      if (!imageInputSupported || busy || !activeSessionId) return;
+      const imageFiles = collectPastedImageFilesFromClipboard(e.clipboardData);
+      if (!imageFiles.length) return;
+      e.preventDefault();
+      const dt = new DataTransfer();
+      for (const f of imageFiles) {
+        dt.items.add(f);
+      }
+      void addImageFiles(dt.files);
+    },
+    [activeSessionId, addImageFiles, busy, imageInputSupported],
   );
 
   const updateMessagesBottomFade = useCallback(() => {
@@ -1220,7 +1399,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                         disabled={busy || summaryInFlight}
                         onClick={() => {
                           closeChatsPanel();
-                          openChatSummary(s.id, s.title, loadMessages(s.id));
+                          openChatSummary(s.id, s.title);
                         }}
                         title={t('chat.summary.view')}
                         aria-label={t('chat.summary.view')}
@@ -1303,14 +1482,33 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                           {m.attachments?.length ? (
                             <div className="msg-attachments" aria-label={t('chat.attach.images')}>
                               {m.attachments.map((a) => (
-                                <div key={a.id} className="msg-attachment-card">
+                                <div
+                                  key={a.id}
+                                  className="msg-attachment-card msg-attachment-card-clickable"
+                                  role="button"
+                                  tabIndex={0}
+                                  title={t('chat.imageViewer.open')}
+                                  aria-label={t('chat.imageViewer.open')}
+                                  onClick={() => openAttachmentViewer(a)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      openAttachmentViewer(a);
+                                    }
+                                  }}
+                                >
                                   <img
                                     src={a.dataUrl}
-                                    alt={a.name}
+                                    alt=""
                                     className="msg-attachment-image"
+                                    draggable={false}
                                   />
                                   <div className="msg-attachment-meta">
-                                    <strong>{a.name}</strong>
+                                    <strong title={a.name}>{a.name}</strong>
+                                    <small>
+                                      {(a.mime || '').trim() || t('chat.imageViewer.mimeUnknown')} ·{' '}
+                                      {formatBytes(estimateDataUrlBytes(a.dataUrl))}
+                                    </small>
                                   </div>
                                 </div>
                               ))}
@@ -1336,6 +1534,14 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                           ) : null}
                           {streaming ? <span className="cursor-blink" aria-hidden /> : null}
                         </div>
+                        {!streaming && m.nanoTurnStats ? (
+                          <NanoTurnStatsFooter
+                            stats={m.nanoTurnStats}
+                            t={t}
+                            messageCreatedAt={m.createdAt}
+                            lang={lang}
+                          />
+                        ) : null}
                       </div>
                     </div>
                   );
@@ -1354,12 +1560,16 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                 </div>
               ) : null}
               <form
-                className="composer-inner composer-inner--align-end"
+                className={`composer-inner composer-inner--align-end${composerImageDropHover ? ' composer-inner--drop-hover' : ''}`}
                 onSubmit={(e) => {
                   e.preventDefault();
                   if (!canSendMessage) return;
                   void send();
                 }}
+                onDragEnter={onComposerDragEnter}
+                onDragLeave={onComposerDragLeave}
+                onDragOver={onComposerDragOver}
+                onDrop={onComposerDrop}
               >
                 <input
                   ref={fileInputRef}
@@ -1428,6 +1638,22 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                         <IconChatSummary size={17} />
                       </button>
                     ) : null}
+                    {messages.length > 0 ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-icon composer-rail-btn composer-export-btn"
+                        disabled={busy || !activeSessionId}
+                        onClick={() => {
+                          setChatsOpen(false);
+                          setSettingsOpen(false);
+                          setExportOpen(true);
+                        }}
+                        title={t('chat.export.open')}
+                        aria-label={t('chat.export.open')}
+                      >
+                        <IconExportChat size={17} />
+                      </button>
+                    ) : null}
                   </div>
                 </div>
                 <div className="composer-field-wrap composer-input-shell">
@@ -1456,6 +1682,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={onComposerKeyDown}
+                    onPaste={onComposerPaste}
                     placeholder={t('placeholder')}
                     disabled={busy || !activeSessionId}
                     rows={1}
@@ -1676,7 +1903,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
               {settingsSection === 'data' ? (
                 <>
                   <h3 className="settings-vscode-pane-title">{t('settings.sectionData')}</h3>
-                  <LocalStorageFootprintHint t={t} />
+                  <StorageQuotaHint t={t} />
                   <div className="user-settings-privacy-danger-zone">
                     <button
                       type="button"
@@ -1746,6 +1973,27 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         confirmLabel={t('settings.clearAllDataAction')}
         cancelLabel={t('dialog.back')}
       />
+
+      <ChatExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        messages={messages}
+        sessionTitle={sessions.find((s) => s.id === activeSessionId)?.title ?? t('defaultChatTitle')}
+        chatDisplayName={settingsDraft.preferredName.trim()}
+        assistantExportLabel={modelUiName}
+        lang={lang}
+        t={t}
+        onErrorMessage={(msg) => setError(msg)}
+      />
+      {viewerImages.length > 0 ? (
+        <ImageViewerDialog
+          open={imageViewerOpen}
+          onClose={() => setImageViewerOpen(false)}
+          images={viewerImages}
+          initialIndex={imageViewerInitial}
+          t={t}
+        />
+      ) : null}
 
       <DraggableDialog
         open={aboutOpen}

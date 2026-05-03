@@ -18,6 +18,21 @@ function localeForLang(lang: AppLang): string {
   return 'es-AR';
 }
 
+/** Full locale date/time (seconds), for metrics detail — not relative. */
+export function formatMessageAbsoluteTime(iso: string, lang: AppLang): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(localeForLang(lang), {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
 function formatShortLabel(iso: string, nowMs: number, lang: AppLang, t: Translator): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';

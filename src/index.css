@@ -28,22 +28,23 @@
 
 :root[data-theme='light'] {
   --fg: #0f172a;
-  --bg-deep: #f1f5f9;
-  --bg-mid: #e2e8f0;
+  /* Chat shell: sky-cream with a stronger center band vs edges (more contrast). */
+  --bg-deep: #f2f7fd;
+  --bg-mid: #b2cfe5;
   --bg-panel: #ffffff;
-  --bg-elevated: #f8fafc;
-  --border: #cbd5e1;
+  --bg-elevated: #e8f2fa;
+  --border: #9eb4cc;
   --text: #0f172a;
-  --text-muted: #64748b;
+  --text-muted: #556478;
   --accent: #007aff;
   --accent-dim: #0060df;
-  --user-bubble: #e0e7ff;
-  --assistant-bubble: #f1f5f9;
+  --user-bubble: #d8e4ff;
+  --assistant-bubble: #dfeef9;
   --danger: #c74646;
-  --overlay-soft: rgba(15, 23, 42, 0.06);
-  --overlay-strong: rgba(15, 23, 42, 0.1);
-  --code-bg: #e2e8f0;
-  --code-panel-bg: #f1f5f9;
+  --overlay-soft: rgba(15, 23, 42, 0.08);
+  --overlay-strong: rgba(15, 23, 42, 0.12);
+  --code-bg: #d0e4f4;
+  --code-panel-bg: #e4f0fa;
   --modal-backdrop: rgba(15, 23, 42, 0.34);
   --selection-bg: rgba(0, 122, 255, 0.18);
   --scrollbar-thumb: rgba(100, 116, 139, 0.4);

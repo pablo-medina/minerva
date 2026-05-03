@@ -1,5 +1,6 @@
 import { LM_CORE } from './promptApi';
 import type { AppLang, ChatMessage } from './types';
+import { isChatImageAttachment, isChatTextAttachment } from './types';
 
 const MAX_TRANSCRIPT_MESSAGES = 56;
 const MAX_TRANSCRIPT_CHARS = 120_000;
@@ -38,7 +39,14 @@ export function fingerprintForChatSummaryCache(messages: ChatMessage[]): string 
     step('\n');
     step(m.content);
     step('\n');
-    step(String(m.attachments?.length ?? 0));
+    const atts = m.attachments ?? [];
+    step(String(atts.length));
+    step('\n');
+    for (const a of atts) {
+      step(a.id);
+      step(isChatTextAttachment(a) ? `t:${a.text.length}` : `i:${a.dataUrl?.length ?? 0}`);
+      step(';');
+    }
     step('\n');
   }
   return `${slice.length}:${h.toString(16)}`;
@@ -52,7 +60,12 @@ export function buildChatTranscriptForSummary(messages: ChatMessage[]): string {
     .map((m) => {
       let line = `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.trim()}`;
       if (m.role === 'user' && m.attachments?.length) {
-        line += ` [${m.attachments.length} image(s)]`;
+        const imgs = m.attachments.filter(isChatImageAttachment).length;
+        const txs = m.attachments.filter(isChatTextAttachment).length;
+        const bits: string[] = [];
+        if (imgs) bits.push(`${imgs} image(s)`);
+        if (txs) bits.push(`${txs} text file(s)`);
+        if (bits.length) line += ` [${bits.join(', ')}]`;
       }
       return line;
     })

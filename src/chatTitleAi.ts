@@ -1,5 +1,6 @@
 import { LM_CORE } from './promptApi';
 import type { AppLang, ChatMessage } from './types';
+import { isChatImageAttachment, isChatTextAttachment } from './types';
 import { AUTO_TITLE_MAX_LEN } from './title';
 
 const TITLE_TRANSCRIPT_MAX_MESSAGES = 28;
@@ -23,7 +24,12 @@ export function buildChatTitlePrompt(lang: AppLang, messages: ChatMessage[]): st
     .map((m) => {
       let line = `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.trim()}`;
       if (m.role === 'user' && m.attachments?.length) {
-        line += ` [${m.attachments.length} image(s)]`;
+        const imgs = m.attachments.filter(isChatImageAttachment).length;
+        const txs = m.attachments.filter(isChatTextAttachment).length;
+        const bits: string[] = [];
+        if (imgs) bits.push(`${imgs} image(s)`);
+        if (txs) bits.push(`${txs} text file(s)`);
+        if (bits.length) line += ` [${bits.join(', ')}]`;
       }
       return line;
     })

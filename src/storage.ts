@@ -1,8 +1,16 @@
 import { detectBrowserLang } from './i18n';
-import type { AppLang, ChatImageAttachment, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
-import { ensureDbReady, getDb, type AppSettingsRow, type PersistedChatMessage } from './db';
+import type { AppLang, ChatAttachment, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
+import { isChatTextAttachment } from './types';
+import {
+  ensureDbReady,
+  getDb,
+  type AppSettingsRow,
+  type ChatThreadRecord,
+  type PersistedChatMessage,
+} from './db';
+import { getOriginStorageQuotaMb } from './storageEstimate';
 
-function parseNanoTurnStats(raw: unknown): import('./types').NanoTurnStats | undefined {
+export function parseNanoTurnStats(raw: unknown): import('./types').NanoTurnStats | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const s = raw as Record<string, unknown>;
   const modelId = typeof s.modelId === 'string' ? s.modelId.trim() : '';
@@ -61,10 +69,8 @@ function defaultAppRow(): AppSettingsRow {
   };
 }
 
-async function readAppRow(): Promise<AppSettingsRow> {
-  await ensureDbReady();
-  const db = await getDb();
-  const row = await db.get('settings', 'app');
+/** Normalizes the persisted app row (IndexedDB or backup JSON). Exported for backup/restore. */
+export function normalizeAppSettingsRow(row: AppSettingsRow | null | undefined): AppSettingsRow {
   if (!row) return defaultAppRow();
   return {
     key: 'app',
@@ -81,6 +87,44 @@ async function readAppRow(): Promise<AppSettingsRow> {
     theme: row.theme === 'light' || row.theme === 'dark' ? row.theme : 'dark',
     activeSessionId: typeof row.activeSessionId === 'string' ? row.activeSessionId : '',
   };
+}
+
+export async function loadAppSettingsRow(): Promise<AppSettingsRow> {
+  await ensureDbReady();
+  const db = await getDb();
+  const row = await db.get('settings', 'app');
+  return normalizeAppSettingsRow(row ?? undefined);
+}
+
+/**
+ * Replaces every chat thread and the app settings row in one transaction (used by backup restore).
+ * Caller must supply already-validated `ChatThreadRecord` values.
+ */
+export async function replaceAllPersistedState(
+  settings: AppSettingsRow,
+  chats: ChatThreadRecord[],
+): Promise<void> {
+  const normalized = normalizeAppSettingsRow(settings);
+  const ids = new Set(chats.map((c) => c.sessionId));
+  let activeSessionId = normalized.activeSessionId.trim();
+  if (activeSessionId && !ids.has(activeSessionId)) {
+    activeSessionId = chats[0]?.sessionId ?? '';
+  }
+  const nextSettings: AppSettingsRow = { ...normalized, activeSessionId };
+
+  await ensureDbReady();
+  const db = await getDb();
+  const keys = await db.getAllKeys('chats');
+  const tx = db.transaction(['chats', 'settings'], 'readwrite');
+  const chatStore = tx.objectStore('chats');
+  for (const k of keys) {
+    chatStore.delete(k);
+  }
+  for (const row of chats) {
+    chatStore.put(row);
+  }
+  tx.objectStore('settings').put(nextSettings);
+  await tx.done;
 }
 
 async function writeAppRow(next: AppSettingsRow): Promise<void> {
@@ -113,22 +157,50 @@ async function serializeMessage(m: ChatMessage): Promise<PersistedChatMessage> {
   };
   if (!m.attachments?.length) return base;
   const attachments = await Promise.all(
-    m.attachments.map(async (a) => ({
-      id: a.id,
-      name: a.name,
-      mime: a.mime,
-      blob: await dataUrlToBlob(a.dataUrl),
-    })),
+    m.attachments.map(async (a) => {
+      if (isChatTextAttachment(a)) {
+        return {
+          id: a.id,
+          name: a.name,
+          mime: a.mime || 'text/plain;charset=utf-8',
+          kind: 'text' as const,
+          blob: new Blob([a.text], { type: a.mime || 'text/plain;charset=utf-8' }),
+        };
+      }
+      return {
+        id: a.id,
+        name: a.name,
+        mime: a.mime,
+        kind: 'image' as const,
+        blob: await dataUrlToBlob(a.dataUrl),
+      };
+    }),
   );
   return { ...base, attachments };
 }
 
 async function deserializeMessage(pm: PersistedChatMessage): Promise<ChatMessage> {
-  let attachments: ChatImageAttachment[] | undefined;
+  let attachments: ChatAttachment[] | undefined;
   if (pm.attachments?.length) {
-    const parsed: ChatImageAttachment[] = [];
+    const parsed: ChatAttachment[] = [];
     for (const a of pm.attachments) {
       if (!a?.blob || typeof a.id !== 'string' || typeof a.name !== 'string') continue;
+      const kind = a.kind === 'text' ? 'text' : 'image';
+      if (kind === 'text') {
+        try {
+          const text = await a.blob.text();
+          parsed.push({
+            kind: 'text',
+            id: a.id,
+            name: a.name || 'file.txt',
+            mime: typeof a.mime === 'string' ? a.mime : undefined,
+            text,
+          });
+        } catch {
+          /* skip */
+        }
+        continue;
+      }
       const dataUrl = await blobToDataUrl(a.blob);
       if (!dataUrl.startsWith('data:')) continue;
       parsed.push({
@@ -152,37 +224,37 @@ async function deserializeMessage(pm: PersistedChatMessage): Promise<ChatMessage
 }
 
 export async function loadSettings(): Promise<LocalSettings> {
-  const row = await readAppRow();
+  const row = await loadAppSettingsRow();
   return row.localSettings;
 }
 
 export async function saveSettings(s: LocalSettings): Promise<void> {
-  const prev = await readAppRow();
+  const prev = await loadAppSettingsRow();
   await writeAppRow({ ...prev, localSettings: s });
 }
 
 export async function loadAppPrefs(): Promise<{ lang: AppLang; theme: ThemeMode }> {
-  const row = await readAppRow();
+  const row = await loadAppSettingsRow();
   return { lang: row.lang, theme: row.theme };
 }
 
 export async function saveAppPrefsLang(lang: AppLang): Promise<void> {
-  const prev = await readAppRow();
+  const prev = await loadAppSettingsRow();
   await writeAppRow({ ...prev, lang });
 }
 
 export async function saveAppPrefsTheme(theme: ThemeMode): Promise<void> {
-  const prev = await readAppRow();
+  const prev = await loadAppSettingsRow();
   await writeAppRow({ ...prev, theme });
 }
 
 export async function loadActiveSessionId(): Promise<string> {
-  const row = await readAppRow();
+  const row = await loadAppSettingsRow();
   return row.activeSessionId.trim();
 }
 
 export async function saveActiveSessionId(id: string): Promise<void> {
-  const prev = await readAppRow();
+  const prev = await loadAppSettingsRow();
   await writeAppRow({
     ...prev,
     activeSessionId: id.trim(),
@@ -275,6 +347,38 @@ export async function wipeAllChatThreads(): Promise<void> {
     await tx.store.delete(k);
   }
   await tx.done;
-  const prev = await readAppRow();
+  const prev = await loadAppSettingsRow();
   await writeAppRow({ ...prev, activeSessionId: '' });
+}
+
+/**
+ * Deletes the oldest chat threads (by `updatedAt`) until estimated usage drops below `targetUsageRatio`,
+ * never deleting the active session while other threads exist.
+ */
+export async function pruneOldestChatSessionsExcludingActive(
+  activeSessionId: string,
+  targetUsageRatio: number,
+): Promise<{ deletedIds: string[] }> {
+  const deletedIds: string[] = [];
+  const target = Math.max(0.08, Math.min(0.95, targetUsageRatio));
+  const active = activeSessionId.trim();
+
+  for (let guard = 0; guard < 400; guard++) {
+    const q = await getOriginStorageQuotaMb();
+    if (q.quotaMb <= 0) break;
+    const ratio = q.usedMb / q.quotaMb;
+    if (ratio < target) break;
+
+    const sessions = await loadSessions();
+    if (sessions.length <= 1) break;
+
+    const sorted = [...sessions].sort(
+      (a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime(),
+    );
+    const victim = sorted.find((s) => s.id !== active) ?? sorted[0];
+    await deleteChatSession(victim.id);
+    deletedIds.push(victim.id);
+  }
+
+  return { deletedIds };
 }

@@ -1036,6 +1036,19 @@ html[data-theme='light'] .fab-new-chat {
   box-sizing: border-box;
 }
 
+.msg-attachment-card--text {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+.msg-attachment-card-text-head {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.55rem;
+}
+
 .msg-attachment-card-clickable {
   cursor: zoom-in;
   transition:
@@ -1122,6 +1135,35 @@ html[data-theme='light'] .fab-new-chat {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.msg-text-attachment-preview {
+  margin-top: 0.4rem;
+  max-height: 9rem;
+  overflow: auto;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+  background: color-mix(in oklab, var(--bg-deep) 40%, var(--bg-elevated));
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.attachment-pill-text-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--accent);
+  border: 1px solid color-mix(in oklab, var(--accent) 35%, var(--border));
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
 }
 
 .composer-right-stack > .btn-primary {
@@ -1426,6 +1468,17 @@ html[data-theme='light'] .composer-inner--drop-hover .composer-input-shell {
   opacity: 0.92;
 }
 
+.settings-backup-block {
+  margin-top: 0.75rem;
+}
+
+.settings-backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
 .user-settings-privacy-danger-zone {
   display: flex;
   flex-direction: column;
@@ -1657,6 +1710,51 @@ html[data-theme='light'] .composer-inner--drop-hover .composer-input-shell {
 html[data-theme='light'] .minerva-banner-info {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+}
+
+.storage-pressure-banner {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 9999;
+  max-width: min(520px, calc(100vw - 1.5rem));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.75rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--bg-panel) 82%, var(--danger));
+  border: 1px solid color-mix(in oklab, var(--danger) 38%, var(--border));
+  box-shadow: 0 10px 32px color-mix(in oklab, var(--fg) 18%, transparent);
+}
+
+.storage-pressure-banner-text {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.storage-pressure-banner-link {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.storage-pressure-banner-link:hover {
+  color: color-mix(in oklab, var(--accent) 85%, var(--text));
 }
 
 .cursor-blink::after {

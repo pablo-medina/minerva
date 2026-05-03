@@ -27,3 +27,11 @@ alwaysApply: true
 ## On-device AI affordances
 
 - For **any control that invokes the on-device model** (refine prompt, summaries, titles, etc.), use the shared **`AiActionIcon`** from `src/components/AiActionIcon.tsx` so the sparkle mark stays consistent across the app.
+
+## Persistence and backup / restore
+
+- **All durable app state** (chat threads, messages, attachment blobs, language/theme, active session id, and local settings) lives in **IndexedDB** via `src/db.ts` and `src/storage.ts`. Do not add a second source of truth (e.g. `localStorage` for the same fields) without an explicit product decision.
+- **Backup / restore** is implemented in **`src/backupRestore.ts`** and must stay aligned with the DB:
+  - When you change **`MINERVA_IDB_SCHEMA_VERSION`** in `src/db.ts`, or change object stores / persisted record shapes, **update backup export/import** in `backupRestore.ts` (wire format, validation, or `MINERVA_BACKUP_PAYLOAD_VERSION`) and add any needed **i18n** keys under `settings.backup.*`.
+  - New persisted fields should be included in the backup payload (or intentionally documented as excluded with a code comment).
+- User-facing actions for backup/restore belong under **Settings → Data** (`#settings-pane-data` in `App.tsx`), with strings only from **`src/i18n.ts`**.

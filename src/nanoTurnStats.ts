@@ -1,4 +1,5 @@
 import type { ChatMessage, NanoTurnStats } from './types';
+import { isChatImageAttachment, isChatTextAttachment } from './types';
 
 function roughTokens(text: string): number {
   return Math.max(0, Math.ceil(text.length / 4));
@@ -27,13 +28,19 @@ export function buildNanoTurnStats(args: {
     args.firstTokenAt != null ? Math.max(0, args.firstTokenAt - args.startedAt) : undefined;
 
   let imageCount = 0;
+  let textAttachmentChars = 0;
   for (const m of args.contextMessages) {
-    imageCount += m.attachments?.length ?? 0;
+    for (const a of m.attachments ?? []) {
+      if (isChatImageAttachment(a)) imageCount += 1;
+      else if (isChatTextAttachment(a)) textAttachmentChars += a.text.length;
+    }
   }
 
   const approxPromptTokenEstimate = Math.max(
     1,
-    roughTokens(args.contextMessages.map((m) => m.content).join('\n')) + imageAttachmentOverhead(imageCount),
+    roughTokens(args.contextMessages.map((m) => m.content).join('\n')) +
+      Math.ceil(Math.min(textAttachmentChars, 500_000) / 4) +
+      imageAttachmentOverhead(imageCount),
   );
 
   const approxCompletionTokenEstimate =

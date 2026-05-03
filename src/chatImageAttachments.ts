@@ -1,5 +1,6 @@
 import { MAX_CHAT_IMAGE_BYTES } from './chatAttachmentConstants';
-import type { ChatMessage, ChatImageAttachment } from './types';
+import type { ChatImageAttachment, ChatMessage } from './types';
+import { isChatImageAttachment } from './types';
 
 export function formatImageSizeLimitLabel(): string {
   return formatBytes(MAX_CHAT_IMAGE_BYTES);
@@ -53,7 +54,9 @@ export function collectPastedImageFilesFromClipboard(data: DataTransfer | null):
 }
 
 export function threadUsesImageInputs(messages: ChatMessage[]): boolean {
-  return messages.some((m) => m.role === 'user' && (m.attachments?.length ?? 0) > 0);
+  return messages.some(
+    (m) => m.role === 'user' && (m.attachments?.some(isChatImageAttachment) ?? false),
+  );
 }
 
 export async function fileToImageAttachment(file: File): Promise<ChatImageAttachment> {

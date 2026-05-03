@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
@@ -17,6 +18,7 @@ import {
   languageModelSupported,
   lmCoreForThreadUsesImages,
 } from './promptApi';
+import { BackupRestoreError, downloadMinervaBackupFile, importMinervaBackupFromFile } from './backupRestore';
 import {
   DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
   deleteChatSession,
@@ -25,6 +27,7 @@ import {
   loadMessages,
   loadSessions,
   loadSettings,
+  pruneOldestChatSessionsExcludingActive,
   saveActiveSessionId,
   saveAppPrefsLang,
   saveAppPrefsTheme,
@@ -41,23 +44,40 @@ import {
   resolveApproximateLocation,
 } from './sessionSystemPrompt';
 import { buildNanoTurnStats } from './nanoTurnStats';
-import type { AppLang, ChatImageAttachment, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
+import { buildUserTurnModelParts } from './userModelParts';
+import type { AppLang, ChatAttachment, ChatImageAttachment, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
+import { isChatImageAttachment, isChatTextAttachment } from './types';
 import { ChatExportDialog } from './components/ChatExportDialog';
 import { ImageViewerDialog } from './components/ImageViewerDialog';
 import { NanoTurnStatsFooter } from './components/NanoTurnStatsFooter';
 import { formatBytes, estimateDataUrlBytes } from './chatExportHelpers';
 import { collectChatImagesInOrder, indexOfAttachmentInChat } from './util/collectChatImages';
-import { MAX_CHAT_IMAGE_ATTACHMENTS, MAX_CHAT_IMAGE_BYTES } from './chatAttachmentConstants';
+import {
+  COMPOSER_FILE_INPUT_ACCEPT,
+  MAX_CHAT_ATTACHMENTS_TOTAL,
+  MAX_CHAT_IMAGE_ATTACHMENTS,
+  MAX_CHAT_IMAGE_BYTES,
+  MAX_CHAT_TEXT_ATTACHMENTS,
+  MAX_CHAT_TEXT_BYTES,
+} from './chatAttachmentConstants';
 import {
   closeImageBitmaps,
   collectPastedImageFilesFromClipboard,
-  dataUrlToImageBitmap,
   fileToImageAttachment,
   formatImageSizeLimitLabel,
   isSupportedChatImageMime,
   threadUsesImageInputs,
 } from './chatImageAttachments';
+import {
+  collectPastedTextFilesFromClipboard,
+  countImageAttachments,
+  countTextAttachments,
+  fileToTextAttachment,
+  formatTextAttachmentSizeLimitLabel,
+  isSupportedTextAttachmentMime,
+} from './chatTextAttachments';
 import { AiActionIcon } from './components/AiActionIcon';
+import { StoragePressureBanner } from './components/StoragePressureBanner';
 import { StorageQuotaHint } from './components/StorageQuotaHint';
 import { ChatMarkdown } from './components/ChatMarkdown';
 import { DraggableDialog } from './components/DraggableDialog';
@@ -359,7 +379,11 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [settingsRefineError, setSettingsRefineError] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('general');
   const [imageInputSupported, setImageInputSupported] = useState(false);
-  const [pendingImages, setPendingImages] = useState<ChatImageAttachment[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
+  const [confirmPruneChatsOpen, setConfirmPruneChatsOpen] = useState(false);
+  const [confirmRestoreBackupOpen, setConfirmRestoreBackupOpen] = useState(false);
+  const [pendingRestoreLabel, setPendingRestoreLabel] = useState<string | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
   const [imageViewerInitial, setImageViewerInitial] = useState(0);
@@ -376,6 +400,8 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const backupRestoreInputRef = useRef<HTMLInputElement>(null);
+  const pendingRestoreFileRef = useRef<File | null>(null);
   const prevBusyRef = useRef(false);
 
   const bootstrapSessions = useCallback(async () => {
@@ -445,7 +471,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     void loadMessages(activeSessionId).then((m) => {
       if (!cancelled) setMessages(m);
     });
-    setPendingImages([]);
+    setPendingAttachments([]);
     setImageViewerOpen(false);
     setExportOpen(false);
     return () => {
@@ -580,7 +606,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       setChatsOpen(false);
       setSettingsOpen(false);
       setError(null);
-      setPendingImages([]);
+      setPendingAttachments([]);
       queueMicrotask(() => {
         if (shouldAutoFocusComposerInput()) inputRef.current?.focus();
       });
@@ -689,7 +715,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       setSessions([row]);
       setActiveSessionId(id);
       setMessages([]);
-      setPendingImages([]);
+      setPendingAttachments([]);
       setChatsOpen(false);
       setSettingsOpen(false);
       setError(null);
@@ -716,44 +742,174 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     })();
   }, [resetToFreshSingleChat, t]);
 
+  const openDataSettingsFromBanner = useCallback(() => {
+    setChatsOpen(false);
+    setSettingsOpen(true);
+    setSettingsSection('data');
+    queueMicrotask(() => {
+      document.getElementById('settings-pane-data')?.scrollIntoView({ block: 'nearest' });
+    });
+  }, []);
+
+  const runPruneOldestChats = useCallback(() => {
+    setConfirmPruneChatsOpen(false);
+    void (async () => {
+      const sid = activeSessionIdRef.current;
+      const { deletedIds } = await pruneOldestChatSessionsExcludingActive(sid, 0.78);
+      const list = await loadSessions();
+      const active = await loadActiveSessionId();
+      setSessions(list);
+      setActiveSessionId(active);
+      setMessages(await loadMessages(active));
+      setSettingsNotice(
+        deletedIds.length
+          ? t('settings.prunedChatsNotice').replace('{n}', String(deletedIds.length))
+          : t('settings.pruneNoop'),
+      );
+    })();
+  }, [t]);
+
+  const runDownloadFullBackup = useCallback(() => {
+    setSettingsNotice(null);
+    void (async () => {
+      setBackupBusy(true);
+      try {
+        await downloadMinervaBackupFile();
+        setSettingsNotice(t('settings.backup.downloadDone'));
+      } catch {
+        setError(t('settings.backup.error.exportFailed'));
+      } finally {
+        setBackupBusy(false);
+      }
+    })();
+  }, [t]);
+
+  const requestRestoreBackupFilePick = useCallback(() => {
+    setSettingsNotice(null);
+    setError(null);
+    backupRestoreInputRef.current?.click();
+  }, []);
+
+  const onBackupRestoreFileChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    pendingRestoreFileRef.current = f;
+    setPendingRestoreLabel(f.name);
+    setConfirmRestoreBackupOpen(true);
+  }, []);
+
+  const closeRestoreBackupConfirm = useCallback(() => {
+    setConfirmRestoreBackupOpen(false);
+    pendingRestoreFileRef.current = null;
+    setPendingRestoreLabel(null);
+  }, []);
+
+  const runConfirmedRestoreBackup = useCallback(() => {
+    setConfirmRestoreBackupOpen(false);
+    const f = pendingRestoreFileRef.current;
+    pendingRestoreFileRef.current = null;
+    setPendingRestoreLabel(null);
+    if (!f) return;
+    void (async () => {
+      setBackupBusy(true);
+      try {
+        await importMinervaBackupFromFile(f);
+        window.location.reload();
+      } catch (err) {
+        const key =
+          err instanceof BackupRestoreError ? err.i18nKey : 'settings.backup.error.importFailed';
+        setError(t(key));
+      } finally {
+        setBackupBusy(false);
+      }
+    })();
+  }, [t]);
+
   const [composerImageDropHover, setComposerImageDropHover] = useState(false);
 
-  const addImageFiles = useCallback(
+  const addComposerFiles = useCallback(
     async (list: FileList | null) => {
-      if (!list?.length || !imageInputSupported) return;
+      if (!list?.length || !activeSessionId || !nanoLmRuntimeOk || busy) return;
       setError(null);
-      const limitLabel = formatImageSizeLimitLabel();
-      const added: ChatImageAttachment[] = [];
+      const imgLimitLabel = formatImageSizeLimitLabel();
+      const txtLimitLabel = formatTextAttachmentSizeLimitLabel();
+      const added: ChatAttachment[] = [];
+      const cur = () => [...pendingAttachments, ...added];
+
       for (const file of Array.from(list)) {
-        if (added.length + pendingImages.length >= MAX_CHAT_IMAGE_ATTACHMENTS) {
-          setError(t('chat.attachments.maxCount').replace('{n}', String(MAX_CHAT_IMAGE_ATTACHMENTS)));
+        const nTot = cur().length;
+        if (nTot >= MAX_CHAT_ATTACHMENTS_TOTAL) {
+          setError(t('chat.attachments.maxTotal').replace('{n}', String(MAX_CHAT_ATTACHMENTS_TOTAL)));
           break;
         }
-        if (file.size > MAX_CHAT_IMAGE_BYTES) {
-          setError(
-            t('chat.attachments.fileTooLarge')
-              .replace('{name}', file.name)
-              .replace('{limit}', limitLabel),
-          );
-          continue;
-        }
+
         const mime = (file.type || '').trim();
-        if (!mime || !isSupportedChatImageMime(mime)) {
-          setError(t('chat.attachments.unsupportedFormat').replace('{name}', file.name));
+        const isImg = mime && isSupportedChatImageMime(mime);
+        const isTxt = isSupportedTextAttachmentMime(mime, file.name);
+
+        if (isImg) {
+          if (!imageInputSupported) {
+            setError(t('chat.attach.hintUnavailable'));
+            continue;
+          }
+          if (countImageAttachments(cur()) >= MAX_CHAT_IMAGE_ATTACHMENTS) {
+            setError(t('chat.attachments.maxCount').replace('{n}', String(MAX_CHAT_IMAGE_ATTACHMENTS)));
+            break;
+          }
+          if (file.size > MAX_CHAT_IMAGE_BYTES) {
+            setError(
+              t('chat.attachments.fileTooLarge')
+                .replace('{name}', file.name)
+                .replace('{limit}', imgLimitLabel),
+            );
+            continue;
+          }
+          try {
+            added.push(await fileToImageAttachment(file));
+          } catch {
+            setError(t('chat.attachments.imageReadFailed'));
+          }
           continue;
         }
-        try {
-          added.push(await fileToImageAttachment(file));
-        } catch {
-          setError(t('chat.attachments.imageReadFailed'));
+
+        if (isTxt) {
+          if (countTextAttachments(cur()) >= MAX_CHAT_TEXT_ATTACHMENTS) {
+            setError(t('chat.attachments.maxText').replace('{n}', String(MAX_CHAT_TEXT_ATTACHMENTS)));
+            break;
+          }
+          if (file.size > MAX_CHAT_TEXT_BYTES) {
+            setError(
+              t('chat.attachments.textTooLarge')
+                .replace('{name}', file.name)
+                .replace('{limit}', txtLimitLabel),
+            );
+            continue;
+          }
+          try {
+            added.push(await fileToTextAttachment(file));
+          } catch {
+            setError(t('chat.attachments.textReadFailed'));
+          }
+          continue;
         }
+
+        setError(t('chat.attachments.unsupportedFile').replace('{name}', file.name));
       }
+
       if (added.length) {
-        setPendingImages((prev) => [...prev, ...added].slice(0, MAX_CHAT_IMAGE_ATTACHMENTS));
+        setPendingAttachments((prev) => [...prev, ...added].slice(0, MAX_CHAT_ATTACHMENTS_TOTAL));
       }
       if (fileInputRef.current) fileInputRef.current.value = '';
     },
-    [imageInputSupported, pendingImages.length, t],
+    [
+      activeSessionId,
+      busy,
+      imageInputSupported,
+      nanoLmRuntimeOk,
+      pendingAttachments,
+      t,
+    ],
   );
 
   const dataTransferHasFiles = useCallback((dt: DataTransfer | null) => {
@@ -767,11 +923,11 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
 
   const onComposerDragEnter = useCallback(
     (e: DragEvent<HTMLFormElement>) => {
-      if (!imageInputSupported || !activeSessionId) return;
+      if (!nanoLmRuntimeOk || !activeSessionId) return;
       if (!dataTransferHasFiles(e.dataTransfer)) return;
       if (!busy) setComposerImageDropHover(true);
     },
-    [activeSessionId, busy, dataTransferHasFiles, imageInputSupported],
+    [activeSessionId, busy, dataTransferHasFiles, nanoLmRuntimeOk],
   );
 
   const onComposerDragLeave = useCallback((e: DragEvent<HTMLFormElement>) => {
@@ -782,7 +938,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
 
   const onComposerDragOver = useCallback(
     (e: DragEvent<HTMLFormElement>) => {
-      if (!imageInputSupported || !activeSessionId) return;
+      if (!nanoLmRuntimeOk || !activeSessionId) return;
       if (!dataTransferHasFiles(e.dataTransfer)) return;
       e.preventDefault();
       try {
@@ -791,34 +947,35 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         /* ignore */
       }
     },
-    [activeSessionId, busy, dataTransferHasFiles, imageInputSupported],
+    [activeSessionId, busy, dataTransferHasFiles, nanoLmRuntimeOk],
   );
 
   const onComposerDrop = useCallback(
     (e: DragEvent<HTMLFormElement>) => {
       setComposerImageDropHover(false);
-      if (!imageInputSupported || !activeSessionId) return;
+      if (!nanoLmRuntimeOk || !activeSessionId) return;
       if (!dataTransferHasFiles(e.dataTransfer)) return;
       e.preventDefault();
       if (busy) return;
       const { files } = e.dataTransfer;
       if (!files?.length) return;
-      void addImageFiles(files);
+      void addComposerFiles(files);
     },
-    [activeSessionId, addImageFiles, busy, dataTransferHasFiles, imageInputSupported],
+    [activeSessionId, addComposerFiles, busy, dataTransferHasFiles, nanoLmRuntimeOk],
   );
 
   const send = useCallback(async () => {
     if (!nanoLmRuntimeOk) return;
     const text = input.trim();
-    const pending = [...pendingImages];
+    const pending = [...pendingAttachments];
     if ((!text && pending.length === 0) || busy || !activeSessionId) return;
-    if (pending.length && !imageInputSupported) {
+    const pendingHasImages = pending.some(isChatImageAttachment);
+    if (pendingHasImages && !imageInputSupported) {
       setError(t('chat.attach.hintUnavailable'));
       return;
     }
     setInput('');
-    setPendingImages([]);
+    setPendingAttachments([]);
     setError(null);
     setBusy(true);
     const settings = await loadSettings();
@@ -858,7 +1015,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     abortRef.current = ac;
 
     const modelText = text || t('chat.internal.attachmentsOnlyBody');
-    const needsMm = pending.length > 0 || threadUsesImageInputs(prior);
+    const needsMm = pendingHasImages || threadUsesImageInputs(prior);
     let partsToClose: LanguageModelMessageContent[] | null = null;
 
     try {
@@ -920,10 +1077,11 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
           markFirstChunk,
         );
       } else {
-        const parts: LanguageModelMessageContent[] = [{ type: 'text', value: modelText }];
-        for (const att of pending) {
-          parts.push({ type: 'image', value: await dataUrlToImageBitmap(att.dataUrl) });
-        }
+        const parts = (await buildUserTurnModelParts({
+          modelText,
+          attachments: pending,
+          attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
+        })) as LanguageModelMessageContent[];
         partsToClose = parts;
         const stream = session.promptStreaming([{ role: 'user', content: parts }], {
           signal: ac.signal,
@@ -1006,7 +1164,9 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         });
       }
     } finally {
-      if (partsToClose) closeImageBitmaps(partsToClose);
+      if (partsToClose) {
+        closeImageBitmaps(partsToClose.filter((p) => p.type === 'image'));
+      }
       setBusy(false);
       abortRef.current = null;
       setDownloadPct(null);
@@ -1019,7 +1179,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     lang,
     messages,
     nanoLmRuntimeOk,
-    pendingImages,
+    pendingAttachments,
     persistMessages,
     t,
   ]);
@@ -1158,8 +1318,8 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     () =>
       Boolean(activeSessionId) &&
       !busy &&
-      (input.trim().length > 0 || pendingImages.length > 0),
-    [activeSessionId, busy, input, pendingImages.length],
+      (input.trim().length > 0 || pendingAttachments.length > 0),
+    [activeSessionId, busy, input, pendingAttachments.length],
   );
 
   const listableSessions = useMemo(
@@ -1197,17 +1357,21 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
 
   const onComposerPaste = useCallback(
     (e: ClipboardEvent<HTMLTextAreaElement>) => {
-      if (!imageInputSupported || busy || !activeSessionId) return;
-      const imageFiles = collectPastedImageFilesFromClipboard(e.clipboardData);
-      if (!imageFiles.length) return;
+      if (!nanoLmRuntimeOk || busy || !activeSessionId) return;
+      const imageFiles = imageInputSupported ? collectPastedImageFilesFromClipboard(e.clipboardData) : [];
+      const textFiles = collectPastedTextFilesFromClipboard(e.clipboardData);
+      if (!imageFiles.length && !textFiles.length) return;
       e.preventDefault();
       const dt = new DataTransfer();
       for (const f of imageFiles) {
         dt.items.add(f);
       }
-      void addImageFiles(dt.files);
+      for (const f of textFiles) {
+        dt.items.add(f);
+      }
+      void addComposerFiles(dt.files);
     },
-    [activeSessionId, addImageFiles, busy, imageInputSupported],
+    [activeSessionId, addComposerFiles, busy, imageInputSupported, nanoLmRuntimeOk],
   );
 
   const updateMessagesBottomFade = useCallback(() => {
@@ -1463,7 +1627,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                   <strong>{t('empty.title')}</strong>
                   <p>{t('empty.bodyWhere')}</p>
                   <p>{t('empty.bodyKeys')}</p>
-                  {imageInputSupported ? <p>{t('empty.attachHint')}</p> : null}
+                  {nanoLmRuntimeOk ? <p>{t('empty.attachHint')}</p> : null}
                 </div>
               ) : (
                 messages.map((m, i) => {
@@ -1480,38 +1644,61 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                             </div>
                           </div>
                           {m.attachments?.length ? (
-                            <div className="msg-attachments" aria-label={t('chat.attach.images')}>
-                              {m.attachments.map((a) => (
-                                <div
-                                  key={a.id}
-                                  className="msg-attachment-card msg-attachment-card-clickable"
-                                  role="button"
-                                  tabIndex={0}
-                                  title={t('chat.imageViewer.open')}
-                                  aria-label={t('chat.imageViewer.open')}
-                                  onClick={() => openAttachmentViewer(a)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                      e.preventDefault();
-                                      openAttachmentViewer(a);
-                                    }
-                                  }}
-                                >
-                                  <img
-                                    src={a.dataUrl}
-                                    alt=""
-                                    className="msg-attachment-image"
-                                    draggable={false}
-                                  />
-                                  <div className="msg-attachment-meta">
-                                    <strong title={a.name}>{a.name}</strong>
-                                    <small>
-                                      {(a.mime || '').trim() || t('chat.imageViewer.mimeUnknown')} ·{' '}
-                                      {formatBytes(estimateDataUrlBytes(a.dataUrl))}
-                                    </small>
+                            <div className="msg-attachments" aria-label={t('chat.attach.filesAndImages')}>
+                              {m.attachments.map((a) =>
+                                isChatTextAttachment(a) ? (
+                                  <div key={a.id} className="msg-attachment-card msg-attachment-card--text">
+                                    <div className="msg-attachment-card-text-head">
+                                      <div className="attachment-pill-text-icon" aria-hidden>
+                                        TXT
+                                      </div>
+                                      <div className="msg-attachment-meta">
+                                        <strong title={a.name}>{a.name}</strong>
+                                        <small>
+                                          {(a.mime || '').trim() || t('chat.imageViewer.mimeUnknown')} ·{' '}
+                                          {t('chat.textAttachment.previewChars').replace(
+                                            '{n}',
+                                            String(a.text.length),
+                                          )}
+                                        </small>
+                                      </div>
+                                    </div>
+                                    <pre className="msg-text-attachment-preview" tabIndex={0}>
+                                      {a.text.length > 4000 ? `${a.text.slice(0, 4000)}…` : a.text}
+                                    </pre>
                                   </div>
-                                </div>
-                              ))}
+                                ) : (
+                                  <div
+                                    key={a.id}
+                                    className="msg-attachment-card msg-attachment-card-clickable"
+                                    role="button"
+                                    tabIndex={0}
+                                    title={t('chat.imageViewer.open')}
+                                    aria-label={t('chat.imageViewer.open')}
+                                    onClick={() => openAttachmentViewer(a)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        openAttachmentViewer(a);
+                                      }
+                                    }}
+                                  >
+                                    <img
+                                      src={a.dataUrl}
+                                      alt=""
+                                      className="msg-attachment-image"
+                                      draggable={false}
+                                    />
+                                    <div className="msg-attachment-meta">
+                                      <strong title={a.name}>{a.name}</strong>
+                                      <small>
+                                        {(a.mime || '').trim() || t('chat.imageViewer.mimeUnknown')} ·{' '}
+                                        {formatBytes(estimateDataUrlBytes(a.dataUrl))}
+                                      </small>
+                                    </div>
+                                  </div>
+                                ),
+                              )}
                             </div>
                           ) : null}
                           {m.content.trim() ? <div className="msg-body">{m.content}</div> : null}
@@ -1576,8 +1763,8 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                   type="file"
                   multiple
                   className="composer-file-input"
-                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                  onChange={(e) => void addImageFiles(e.target.files)}
+                  accept={COMPOSER_FILE_INPUT_ACCEPT}
+                  onChange={(e) => void addComposerFiles(e.target.files)}
                 />
                 <div
                   className="composer-meta-mobile"
@@ -1609,14 +1796,14 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                     </span>
                   </div>
                   <div className="composer-rail" role="toolbar" aria-label={t('composer.toolbarAria')}>
-                    {imageInputSupported ? (
+                    {nanoLmRuntimeOk ? (
                       <button
                         type="button"
                         className="btn btn-ghost btn-icon composer-rail-btn composer-attach-btn"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={busy || !activeSessionId}
-                        title={t('chat.attach.images')}
-                        aria-label={t('chat.attach.images')}
+                        title={t('chat.attach.filesAndImages')}
+                        aria-label={t('chat.attach.filesAndImages')}
                       >
                         <IconPaperclip size={17} />
                       </button>
@@ -1657,16 +1844,22 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                   </div>
                 </div>
                 <div className="composer-field-wrap composer-input-shell">
-                  {pendingImages.length ? (
-                    <div className="composer-attachments" aria-label={t('chat.attach.images')}>
-                      {pendingImages.map((a) => (
+                  {pendingAttachments.length ? (
+                    <div className="composer-attachments" aria-label={t('chat.attach.filesAndImages')}>
+                      {pendingAttachments.map((a) => (
                         <div key={a.id} className="attachment-pill">
-                          <img src={a.dataUrl} alt="" className="attachment-thumb" />
+                          {isChatTextAttachment(a) ? (
+                            <span className="attachment-pill-text-icon" aria-hidden>
+                              TXT
+                            </span>
+                          ) : (
+                            <img src={a.dataUrl} alt="" className="attachment-thumb" />
+                          )}
                           <span>{a.name}</span>
                           <button
                             type="button"
                             onClick={() =>
-                              setPendingImages((prev) => prev.filter((x) => x.id !== a.id))
+                              setPendingAttachments((prev) => prev.filter((x) => x.id !== a.id))
                             }
                             aria-label={t('chat.attach.removeAria')}
                           >
@@ -1901,14 +2094,62 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                 </>
               ) : null}
               {settingsSection === 'data' ? (
-                <>
+                <div id="settings-pane-data">
                   <h3 className="settings-vscode-pane-title">{t('settings.sectionData')}</h3>
                   <StorageQuotaHint t={t} />
+                  <div className="field">
+                    <p className="hint">{t('settings.pruneOldestChatsHelp')}</p>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={busy || backupBusy}
+                      onClick={() => setConfirmPruneChatsOpen(true)}
+                    >
+                      {t('settings.pruneOldestChats')}
+                    </button>
+                  </div>
+                  <div className="field settings-backup-block">
+                    <p className="hint">{t('settings.backup.lead')}</p>
+                    <div className="settings-backup-actions">
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        disabled={busy || backupBusy}
+                        onClick={() => void runDownloadFullBackup()}
+                      >
+                        {t('settings.backup.download')}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        disabled={busy || backupBusy}
+                        onClick={requestRestoreBackupFilePick}
+                      >
+                        {t('settings.backup.restore')}
+                      </button>
+                    </div>
+                    <p className="hint">{t('settings.backup.restoreHint')}</p>
+                    <input
+                      ref={backupRestoreInputRef}
+                      type="file"
+                      accept="application/json,.json"
+                      aria-hidden
+                      tabIndex={-1}
+                      style={{
+                        position: 'absolute',
+                        width: 0,
+                        height: 0,
+                        opacity: 0,
+                        overflow: 'hidden',
+                      }}
+                      onChange={onBackupRestoreFileChange}
+                    />
+                  </div>
                   <div className="user-settings-privacy-danger-zone">
                     <button
                       type="button"
                       className="btn btn-ghost admin-danger"
-                      disabled={busy}
+                      disabled={busy || backupBusy}
                       onClick={() => setConfirmClearChatsOpen(true)}
                     >
                       {t('settings.clearChats')}
@@ -1916,13 +2157,13 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                     <button
                       type="button"
                       className="btn btn-ghost admin-danger"
-                      disabled={busy}
+                      disabled={busy || backupBusy}
                       onClick={() => setConfirmClearAllDataOpen(true)}
                     >
                       {t('settings.clearAllData')}
                     </button>
                   </div>
-                </>
+                </div>
               ) : null}
             </div>
           </div>
@@ -1973,6 +2214,31 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         confirmLabel={t('settings.clearAllDataAction')}
         cancelLabel={t('dialog.back')}
       />
+      <MessageDialog
+        open={confirmPruneChatsOpen}
+        variant="warning"
+        title={t('settings.pruneOldestChatsTitle')}
+        message={t('settings.pruneOldestChatsBody')}
+        closeAriaLabel={t('dialog.close')}
+        onClose={() => setConfirmPruneChatsOpen(false)}
+        onConfirm={() => void runPruneOldestChats()}
+        confirmLabel={t('settings.pruneOldestChatsAction')}
+        cancelLabel={t('dialog.back')}
+      />
+      <MessageDialog
+        open={confirmRestoreBackupOpen}
+        variant="warning"
+        title={t('settings.backup.restoreConfirmTitle')}
+        message={t('settings.backup.restoreConfirmBody').replace(
+          '{name}',
+          pendingRestoreLabel ?? '—',
+        )}
+        closeAriaLabel={t('dialog.close')}
+        onClose={closeRestoreBackupConfirm}
+        onConfirm={() => void runConfirmedRestoreBackup()}
+        confirmLabel={t('settings.backup.restoreConfirmAction')}
+        cancelLabel={t('dialog.back')}
+      />
 
       <ChatExportDialog
         open={exportOpen}
@@ -2017,6 +2283,8 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
           <p className="about-dialog-copy">{t('about.copyright')}</p>
         </div>
       </DraggableDialog>
+
+      <StoragePressureBanner t={t} onOpenDataSettings={openDataSettingsFromBanner} />
     </div>
   );
 }

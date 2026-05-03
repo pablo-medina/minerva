@@ -1,4 +1,4 @@
-import { dataUrlToImageBitmap } from './chatImageAttachments';
+import { buildUserTurnModelParts } from './userModelParts';
 import type { AppLang, ChatMessage, LocalSettings } from './types';
 
 export type SessionGeo = { lat: number; lon: number };
@@ -134,21 +134,16 @@ export async function buildSessionInitialPromptsAsync(
       continue;
     }
     if (m.role === 'user') {
-      const imgs = m.attachments ?? [];
-      if (!imgs.length) {
+      const atts = m.attachments ?? [];
+      if (!atts.length) {
         out.push({ role: 'user', content: m.content });
         continue;
       }
-      const parts: LanguageModelMessageContent[] = [];
-      const text = m.content.trim();
-      if (text) {
-        parts.push({ type: 'text', value: text });
-      } else {
-        parts.push({ type: 'text', value: opts.attachmentsOnlyPrompt });
-      }
-      for (const att of imgs) {
-        parts.push({ type: 'image', value: await dataUrlToImageBitmap(att.dataUrl) });
-      }
+      const parts = (await buildUserTurnModelParts({
+        modelText: m.content,
+        attachments: atts,
+        attachmentsOnlyPrompt: opts.attachmentsOnlyPrompt,
+      })) as LanguageModelMessageContent[];
       out.push({ role: 'user', content: parts });
     }
   }

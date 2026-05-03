@@ -1,4 +1,5 @@
 import type { ChatImageAttachment, ChatMessage } from '../types';
+import { isChatImageAttachment } from '../types';
 import { estimateDataUrlBytes } from '../chatExportHelpers';
 
 export type ViewerImage = ChatImageAttachment & { approxBytes: number };
@@ -8,6 +9,7 @@ export function collectChatImagesInOrder(messages: ChatMessage[]): ViewerImage[]
   for (const m of messages) {
     if (m.role !== 'user' || !m.attachments?.length) continue;
     for (const a of m.attachments) {
+      if (!isChatImageAttachment(a)) continue;
       out.push({ ...a, approxBytes: estimateDataUrlBytes(a.dataUrl) });
     }
   }

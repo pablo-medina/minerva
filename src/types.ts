@@ -2,13 +2,32 @@ export type ThemeMode = 'dark' | 'light';
 
 export type AppLang = 'en' | 'es' | 'es-AR';
 
-/** Persisted image sent with a user message (data URL for storage and UI). */
+/** Image sent with a user message (data URL in memory; stored as Blob in IndexedDB). */
 export type ChatImageAttachment = {
   id: string;
   name: string;
   mime?: string;
   dataUrl: string;
 };
+
+/** UTF-8 text file attached to a user message (stored as Blob in IndexedDB). */
+export type ChatTextAttachment = {
+  kind: 'text';
+  id: string;
+  name: string;
+  mime?: string;
+  text: string;
+};
+
+export type ChatAttachment = ChatImageAttachment | ChatTextAttachment;
+
+export function isChatTextAttachment(a: ChatAttachment): a is ChatTextAttachment {
+  return (a as ChatTextAttachment).kind === 'text';
+}
+
+export function isChatImageAttachment(a: ChatAttachment): a is ChatImageAttachment {
+  return (a as ChatTextAttachment).kind !== 'text';
+}
 
 /** Metrics for one assistant turn (Prompt API does not expose usage; values are estimates). */
 export type NanoTurnStats = {
@@ -26,8 +45,8 @@ export type ChatMessage = {
   role: 'user' | 'assistant' | 'system';
   content: string;
   createdAt: string;
-  /** Optional images included in this user turn (on-device multimodal Prompt API). */
-  attachments?: ChatImageAttachment[];
+  /** Optional files (images and/or UTF-8 text) for this user turn. */
+  attachments?: ChatAttachment[];
   /** Present on assistant messages after a completed on-device generation. */
   nanoTurnStats?: NanoTurnStats;
 };

@@ -3,10 +3,12 @@ import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type { AppLang, ChatSession, LocalSettings, NanoTurnStats, ThemeMode } from './types';
 
 /** Attachment as stored in IndexedDB (binary, not base64). */
-export type PersistedImageAttachment = {
+export type PersistedAttachment = {
   id: string;
   name: string;
   mime?: string;
+  /** Omit or `image` = legacy image attachment. */
+  kind?: 'image' | 'text';
   blob: Blob;
 };
 
@@ -15,7 +17,7 @@ export type PersistedChatMessage = {
   role: 'user' | 'assistant' | 'system';
   content: string;
   createdAt: string;
-  attachments?: PersistedImageAttachment[];
+  attachments?: PersistedAttachment[];
   nanoTurnStats?: NanoTurnStats;
 };
 
@@ -46,13 +48,15 @@ export interface MinervaDBSchema extends DBSchema {
 }
 
 const MINERVA_DB_NAME = 'minerva_db';
-const MINERVA_DB_VERSION = 1;
+
+/** Bump when IndexedDB object stores or record shapes change; keep `backupRestore.ts` in sync. */
+export const MINERVA_IDB_SCHEMA_VERSION = 1;
 
 let dbPromise: Promise<IDBPDatabase<MinervaDBSchema>> | null = null;
 
 export function getDb(): Promise<IDBPDatabase<MinervaDBSchema>> {
   if (!dbPromise) {
-    dbPromise = openDB<MinervaDBSchema>(MINERVA_DB_NAME, MINERVA_DB_VERSION, {
+    dbPromise = openDB<MinervaDBSchema>(MINERVA_DB_NAME, MINERVA_IDB_SCHEMA_VERSION, {
       upgrade(db) {
         if (!db.objectStoreNames.contains('chats')) {
           db.createObjectStore('chats', { keyPath: 'sessionId' });

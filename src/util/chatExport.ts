@@ -5,6 +5,7 @@ import { marked } from 'marked';
 
 import { bubbleRoleLabel } from '../chatExportHelpers';
 import type { ChatMessage } from '../types';
+import { isChatImageAttachment, isChatTextAttachment } from '../types';
 import type { Translator } from '../i18n';
 import { getExportCapabilities } from './exportCapabilities';
 
@@ -54,6 +55,21 @@ function extFromDataUrl(dataUrl: string): string {
   return t.replace('+xml', '').replace(/[^a-z0-9]/g, '') || 'bin';
 }
 
+function collectTextZipEntries(messages: ChatMessage[]): { relPath: string; text: string }[] {
+  const out: { relPath: string; text: string }[] = [];
+  let i = 0;
+  for (const m of messages) {
+    if (m.role !== 'user' || !m.attachments?.length) continue;
+    for (const a of m.attachments) {
+      if (!isChatTextAttachment(a)) continue;
+      i += 1;
+      const safe = a.name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80) || 'file.txt';
+      out.push({ relPath: `files/${String(i).padStart(3, '0')}_${safe}`, text: a.text });
+    }
+  }
+  return out;
+}
+
 function collectDataImageUrls(messages: ChatMessage[]): string[] {
   const seen = new Set<string>();
   const ordered: string[] = [];
@@ -65,7 +81,7 @@ function collectDataImageUrls(messages: ChatMessage[]): string[] {
   for (const m of messages) {
     if (m.attachments) {
       for (const a of m.attachments) {
-        if (a.dataUrl) add(a.dataUrl);
+        if (isChatImageAttachment(a) && a.dataUrl) add(a.dataUrl);
       }
     }
     DATA_IMAGE_RE.lastIndex = 0;
@@ -282,7 +298,9 @@ export async function runChatExport(options: {
   report('collecting', 5);
 
   const imageUrls = collectDataImageUrls(messages);
-  const useZip = imageUrls.length > 0 && (format === 'html' || format === 'markdown');
+  const textZipEntries = collectTextZipEntries(messages);
+  const useZip =
+    (imageUrls.length > 0 || textZipEntries.length > 0) && (format === 'html' || format === 'markdown');
   const urlToPath = buildUrlToPathMap(imageUrls);
 
   assertNotAborted(signal);
@@ -306,8 +324,13 @@ export async function runChatExport(options: {
         parts.push(body ? `${body}\n\n` : '');
         if (m.attachments?.length) {
           for (const a of m.attachments) {
-            const p = urlToPath.get(a.dataUrl);
-            if (p) parts.push(`![${a.name}](${p})\n\n`);
+            if (isChatImageAttachment(a)) {
+              const p = urlToPath.get(a.dataUrl);
+              if (p) parts.push(`![${a.name}](${p})\n\n`);
+            } else if (isChatTextAttachment(a)) {
+              const fence = '```';
+              parts.push(`${fence}\n// minerva-filename: ${a.name}\n${a.text}\n${fence}\n\n`);
+            }
           }
         }
       } else {
@@ -331,7 +354,19 @@ export async function runChatExport(options: {
         if (!path) continue;
         imgFolder.file(path.replace(/^images\//, ''), dataUrlToUint8Array(url));
         i++;
-        report('packaging', 55 + Math.round((i / Math.max(imageUrls.length, 1)) * 35));
+        const imgW = Math.max(imageUrls.length, 1);
+        const txtW = Math.max(textZipEntries.length, 1);
+        report('packaging', 55 + Math.round((i / (imgW + txtW)) * 35));
+      }
+      const filesFolder = zip.folder('files');
+      if (filesFolder && textZipEntries.length) {
+        let j = 0;
+        for (const e of textZipEntries) {
+          assertNotAborted(signal);
+          filesFolder.file(e.relPath.replace(/^files\//, ''), e.text);
+          j++;
+          report('packaging', 70 + Math.round((j / textZipEntries.length) * 22));
+        }
       }
       report('packaging', 92);
       assertNotAborted(signal);
@@ -384,8 +419,12 @@ export async function runChatExport(options: {
         if (m.attachments?.length) {
           inner += '<div class="msg-attachments">';
           for (const a of m.attachments) {
-            const src = useZip ? urlToPath.get(a.dataUrl) ?? a.dataUrl : a.dataUrl;
-            inner += `<figure><img src="${escapeHtml(src)}" alt="${escapeHtml(a.name)}"/></figure>`;
+            if (isChatImageAttachment(a)) {
+              const src = useZip ? urlToPath.get(a.dataUrl) ?? a.dataUrl : a.dataUrl;
+              inner += `<figure><img src="${escapeHtml(src)}" alt="${escapeHtml(a.name)}"/></figure>`;
+            } else if (isChatTextAttachment(a)) {
+              inner += `<pre class="msg-text-export" style="white-space:pre-wrap;overflow:auto;max-height:240px;border:1px solid #ddd;padding:8px;border-radius:8px;background:#f8f8f8;"><code>${escapeHtml(a.text)}</code></pre><div class="msg-text-export-name" style="font-size:11px;color:#666;margin-top:4px;">${escapeHtml(a.name)}</div>`;
+            }
           }
           inner += '</div>';
         }
@@ -417,7 +456,14 @@ export async function runChatExport(options: {
         if (!path) continue;
         imgFolder.file(path.replace(/^images\//, ''), dataUrlToUint8Array(url));
         i++;
-        report('packaging', 65 + Math.round((i / Math.max(imageUrls.length, 1)) * 28));
+        report('packaging', 65 + Math.round((i / Math.max(imageUrls.length, 1)) * 20));
+      }
+      const htmlFilesFolder = zip.folder('files');
+      if (htmlFilesFolder && textZipEntries.length) {
+        for (const e of textZipEntries) {
+          assertNotAborted(signal);
+          htmlFilesFolder.file(e.relPath.replace(/^files\//, ''), e.text);
+        }
       }
       assertNotAborted(signal);
       const blob = await zip.generateAsync({ type: 'blob' });
@@ -478,7 +524,11 @@ export async function runChatExport(options: {
       block += `<div style="white-space:pre-wrap;font-size:12px;line-height:1.5;">${escapeHtml(m.content)}</div>`;
       if (m.attachments?.length) {
         for (const a of m.attachments) {
-          block += `<div style="margin-top:8px;"><img src="${a.dataUrl}" alt="" style="max-width:100%;height:auto;border:1px solid #ccc;display:block;"/></div>`;
+          if (isChatImageAttachment(a)) {
+            block += `<div style="margin-top:8px;"><img src="${escapeHtml(a.dataUrl)}" alt="" style="max-width:100%;height:auto;border:1px solid #ccc;display:block;"/></div>`;
+          } else if (isChatTextAttachment(a)) {
+            block += `<pre style="margin-top:8px;white-space:pre-wrap;font-size:11px;line-height:1.4;border:1px solid #ccc;padding:8px;background:#f5f5f5;max-height:280px;overflow:auto;">${escapeHtml(a.text)}</pre><div style="font-size:10px;color:#666;margin-top:4px;">${escapeHtml(a.name)}</div>`;
+          }
         }
       }
     } else {

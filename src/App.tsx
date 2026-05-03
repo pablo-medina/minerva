@@ -47,6 +47,7 @@ import {
   threadUsesImageInputs,
 } from './chatImageAttachments';
 import { AiActionIcon } from './components/AiActionIcon';
+import { LocalStorageFootprintHint } from './components/LocalStorageFootprintHint';
 import { ChatMarkdown } from './components/ChatMarkdown';
 import { DraggableDialog } from './components/DraggableDialog';
 import { MessageDialog } from './components/MessageDialog';
@@ -1675,6 +1676,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
               {settingsSection === 'data' ? (
                 <>
                   <h3 className="settings-vscode-pane-title">{t('settings.sectionData')}</h3>
+                  <LocalStorageFootprintHint t={t} />
                   <div className="user-settings-privacy-danger-zone">
                     <button
                       type="button"

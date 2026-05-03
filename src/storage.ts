@@ -3,6 +3,34 @@ import type { ChatImageAttachment, ChatMessage, ChatSession, LocalSettings } fro
 
 export const DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES = 8;
 
+/** Many browsers use about 5 MiB per origin for `localStorage`; not exposed by API, used only for UI estimates. */
+const LOCAL_STORAGE_TYPICAL_QUOTA_BYTES = 5 * 1024 * 1024;
+
+/** UTF-16 length × 2 per key and value, summed for all keys (common approximation of quota impact). */
+export function getLocalStorageUsageSummary(): {
+  usedBytes: number;
+  /** 0–100 vs the typical ~5 MiB per-origin `localStorage` ceiling used for display. */
+  percentTypical: number;
+  assumedQuotaMiB: number;
+} {
+  let usedBytes = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      const v = localStorage.getItem(k) ?? '';
+      usedBytes += (k.length + v.length) * 2;
+    }
+  } catch {
+    /* ignore */
+  }
+  const percentTypical = Math.min(
+    100,
+    Math.round((usedBytes / LOCAL_STORAGE_TYPICAL_QUOTA_BYTES) * 100),
+  );
+  return { usedBytes, percentTypical, assumedQuotaMiB: 5 };
+}
+
 const defaultSettings = (): LocalSettings => ({
   systemPrompt: '',
   preferredName: '',

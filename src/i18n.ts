@@ -91,6 +91,9 @@ Rules:
   'settings.clearAllDataAction': 'Delete everything',
   'settings.clearedChats': 'All chats were deleted.',
   'settings.clearedAllData': 'All Minerva data in this browser was removed.',
+  'settings.localStorageUsageLine': 'Local storage (approx.): {pct}%',
+  'settings.localStorageUsageTitle':
+    'Roughly {pct}% of a typical per-site localStorage budget (~{quotaMiB} MiB in many browsers). The real limit can differ; this counts all keys for this site.',
   'chat.dialog.title': 'Chats',
   'chat.dialog.newChat': 'New chat',
   'chat.dialog.empty': 'No chats yet.',
@@ -224,6 +227,9 @@ Reglas:
   'settings.clearAllDataAction': 'Borrar todo',
   'settings.clearedChats': 'Se borraron todos los chats.',
   'settings.clearedAllData': 'Se borró todo lo de Minerva en este navegador.',
+  'settings.localStorageUsageLine': 'Almacenamiento local (aprox.): {pct}%',
+  'settings.localStorageUsageTitle':
+    'Aproximadamente {pct}% de un cupo típico de localStorage por sitio (~{quotaMiB} MiB en muchos navegadores). El límite real puede variar; esto cuenta todas las claves de este sitio.',
   'chat.dialog.title': 'Chats',
   'chat.dialog.newChat': 'Chat nuevo',
   'chat.dialog.empty': 'Todavía no hay chats.',

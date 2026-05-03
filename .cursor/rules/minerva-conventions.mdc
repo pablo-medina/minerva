@@ -1,0 +1,29 @@
+---
+description: Minerva — language, i18n, docs, and UI conventions for agents
+alwaysApply: true
+---
+
+# Minerva project conventions
+
+## Code language
+
+- Write **all code in English**: identifiers, comments, commit messages, and inline technical strings.
+- **Exception**: user-facing copy lives only in **i18n** (`src/i18n.ts` dictionaries). Do not embed Spanish/English UI strings in components except by calling the translator (`t('key')`).
+
+## Documentation
+
+- **README** and any project documentation (markdown in the repo, ADRs, etc.) must be **entirely in English**.
+
+## Internationalization
+
+- **Every user-visible string** must go through i18n: add keys to `src/i18n.ts` for `en`, override in `es` / `es-AR` as needed, and use `createTranslator` / `t('…')` in the UI.
+- Do not add hardcoded labels, placeholders, `aria-label`s, or errors in components without a translation key.
+
+## UI and components
+
+- New **components and layouts** must match the **current visual language**: existing CSS variables (`src/index.css`), utility classes in `src/app.css`, spacing, typography, and the established Slate & Electric Blue palette.
+- Prefer extending existing patterns (buttons, fields, dialogs, composer) over introducing unrelated frameworks or one-off styling systems.
+
+## On-device AI affordances
+
+- For **any control that invokes the on-device model** (refine prompt, future AI actions), use the shared **`AiActionIcon`** from `src/components/AiActionIcon.tsx` so the sparkle mark stays consistent across the app.

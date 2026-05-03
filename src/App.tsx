@@ -9,7 +9,13 @@ import {
 import { LS_LANG, LS_THEME, messagesKey } from './constants';
 import { createTranslator, loadStoredLang, loadStoredTheme } from './i18n';
 import { modelLabelForSession } from './modelLabel';
-import { LM_CORE, languageModelEntryOk, languageModelSupported } from './promptApi';
+import {
+  LM_CORE,
+  languageModelEntryOk,
+  languageModelImageInputSupported,
+  languageModelSupported,
+  lmCoreForThreadUsesImages,
+} from './promptApi';
 import {
   DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
   loadActiveSessionId,
@@ -26,11 +32,20 @@ import {
 import { fingerprintForChatSummaryCache, summarizeChatMessages } from './chatSummary';
 import { generateChatTitleWithOnDeviceModel, shouldRefreshChatTitle } from './chatTitleAi';
 import {
-  buildSessionInitialPrompts,
+  buildSessionInitialPromptsAsync,
   defaultSessionSystemContext,
   resolveApproximateLocation,
 } from './sessionSystemPrompt';
-import type { AppLang, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
+import type { AppLang, ChatImageAttachment, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
+import { MAX_CHAT_IMAGE_ATTACHMENTS, MAX_CHAT_IMAGE_BYTES } from './chatAttachmentConstants';
+import {
+  closeImageBitmaps,
+  dataUrlToImageBitmap,
+  fileToImageAttachment,
+  formatImageSizeLimitLabel,
+  isSupportedChatImageMime,
+  threadUsesImageInputs,
+} from './chatImageAttachments';
 import { AiActionIcon } from './components/AiActionIcon';
 import { ChatMarkdown } from './components/ChatMarkdown';
 import { DraggableDialog } from './components/DraggableDialog';
@@ -81,6 +96,53 @@ async function consumeTextStream(
   } finally {
     reader.releaseLock();
   }
+}
+
+function IconPaperclip({ size = 18 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
+      />
+    </svg>
+  );
+}
+
+/** Document with lines — distinct from generic “AI” sparkles; reads as condensed text / summary. */
+function IconChatSummary({ size = 18 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"
+      />
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M14 2v6h6"
+      />
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M8 9h2M8 13h8M8 17h6"
+      />
+    </svg>
+  );
 }
 
 function HelpCircleIcon() {
@@ -257,10 +319,13 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [refiningSystemPrompt, setRefiningSystemPrompt] = useState(false);
   const [settingsRefineError, setSettingsRefineError] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('general');
+  const [imageInputSupported, setImageInputSupported] = useState(false);
+  const [pendingImages, setPendingImages] = useState<ChatImageAttachment[]>([]);
 
   const nanoLmRuntimeOk = useMemo(() => languageModelSupported(), []);
 
   const lmRef = useRef<LanguageModel | null>(null);
+  const lmUsesImagesRef = useRef(false);
   const refineAbortRef = useRef<AbortController | null>(null);
   const summaryAbortRef = useRef<AbortController | null>(null);
   /** In-memory summary text per session + UI language; invalidated when transcript fingerprint changes. */
@@ -268,6 +333,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const abortRef = useRef<AbortController | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bootstrapSessions = useCallback(() => {
     let list = loadSessions();
@@ -293,12 +359,27 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   }, [bootstrapSessions]);
 
   useEffect(() => {
+    let cancelled = false;
+    if (!nanoLmRuntimeOk) {
+      setImageInputSupported(false);
+      return undefined;
+    }
+    void languageModelImageInputSupported().then((ok) => {
+      if (!cancelled) setImageInputSupported(ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [nanoLmRuntimeOk]);
+
+  useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
 
   useEffect(() => {
     if (!activeSessionId) return;
     setMessages(loadMessages(activeSessionId));
+    setPendingImages([]);
   }, [activeSessionId]);
 
   useEffect(() => {
@@ -310,6 +391,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     let cancelled = false;
     lmRef.current?.destroy();
     lmRef.current = null;
+    lmUsesImagesRef.current = false;
     setModelUiName(modelLabelForSession(null, t));
     const sid = activeSessionId;
     if (!sid) return undefined;
@@ -320,6 +402,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         cancelled = true;
         lmRef.current?.destroy();
         lmRef.current = null;
+        lmUsesImagesRef.current = false;
         setModelUiName(modelLabelForSession(null, t));
       };
     }
@@ -327,9 +410,12 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       try {
         const geo = await resolveApproximateLocation(2600);
         const ctx = defaultSessionSystemContext(lang, geo);
-        const initial = buildSessionInitialPrompts(settings, msgs, ctx);
+        const usesImages = threadUsesImageInputs(msgs);
+        const initial = await buildSessionInitialPromptsAsync(settings, msgs, ctx, {
+          attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
+        });
         const session = await LanguageModel.create({
-          ...LM_CORE,
+          ...lmCoreForThreadUsesImages(usesImages),
           ...(initial ? { initialPrompts: initial } : {}),
           monitor(m) {
             m.addEventListener('downloadprogress', (ev) => {
@@ -341,6 +427,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         });
         if (!cancelled) {
           lmRef.current = session;
+          lmUsesImagesRef.current = usesImages;
           setModelUiName(modelLabelForSession(session, t));
           setDownloadPct(null);
         } else {
@@ -356,9 +443,10 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       cancelled = true;
       lmRef.current?.destroy();
       lmRef.current = null;
+      lmUsesImagesRef.current = false;
       setModelUiName(modelLabelForSession(null, t));
     };
-  }, [activeSessionId, lang, nanoLmRuntimeOk]);
+  }, [activeSessionId, lang, nanoLmRuntimeOk, t]);
 
   useEffect(
     () => () => {
@@ -366,6 +454,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       summaryAbortRef.current?.abort();
       lmRef.current?.destroy();
       lmRef.current = null;
+      lmUsesImagesRef.current = false;
     },
     [],
   );
@@ -410,6 +499,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     setChatsOpen(false);
     setSettingsOpen(false);
     setError(null);
+    setPendingImages([]);
     queueMicrotask(() => {
       if (shouldAutoFocusComposerInput()) inputRef.current?.focus();
     });
@@ -490,6 +580,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     setSettingsNotice(t('settings.saved'));
     lmRef.current?.destroy();
     lmRef.current = null;
+    lmUsesImagesRef.current = false;
   }, [settingsDraft, t]);
 
   const resetToFreshSingleChat = useCallback(() => {
@@ -497,6 +588,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     abortRef.current = null;
     lmRef.current?.destroy();
     lmRef.current = null;
+    lmUsesImagesRef.current = false;
     wipeAllMessageKeys();
     const id = makeId();
     const now = isoNow();
@@ -513,6 +605,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     setSessions([row]);
     setActiveSessionId(id);
     setMessages([]);
+    setPendingImages([]);
     setChatsOpen(false);
     setSettingsOpen(false);
     setError(null);
@@ -537,19 +630,69 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     setSettingsNotice(t('settings.clearedAllData'));
   }, [resetToFreshSingleChat, t]);
 
+  const addImageFiles = useCallback(
+    async (list: FileList | null) => {
+      if (!list?.length || !imageInputSupported) return;
+      setError(null);
+      const limitLabel = formatImageSizeLimitLabel();
+      const added: ChatImageAttachment[] = [];
+      for (const file of Array.from(list)) {
+        if (added.length + pendingImages.length >= MAX_CHAT_IMAGE_ATTACHMENTS) {
+          setError(t('chat.attachments.maxCount').replace('{n}', String(MAX_CHAT_IMAGE_ATTACHMENTS)));
+          break;
+        }
+        if (file.size > MAX_CHAT_IMAGE_BYTES) {
+          setError(
+            t('chat.attachments.fileTooLarge')
+              .replace('{name}', file.name)
+              .replace('{limit}', limitLabel),
+          );
+          continue;
+        }
+        const mime = (file.type || '').trim();
+        if (!mime || !isSupportedChatImageMime(mime)) {
+          setError(t('chat.attachments.unsupportedFormat').replace('{name}', file.name));
+          continue;
+        }
+        try {
+          added.push(await fileToImageAttachment(file));
+        } catch {
+          setError(t('chat.attachments.imageReadFailed'));
+        }
+      }
+      if (added.length) {
+        setPendingImages((prev) => [...prev, ...added].slice(0, MAX_CHAT_IMAGE_ATTACHMENTS));
+      }
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    },
+    [imageInputSupported, pendingImages.length, t],
+  );
+
   const send = useCallback(async () => {
     if (!nanoLmRuntimeOk) return;
     const text = input.trim();
-    if (!text || busy || !activeSessionId) return;
+    const pending = [...pendingImages];
+    if ((!text && pending.length === 0) || busy || !activeSessionId) return;
+    if (pending.length && !imageInputSupported) {
+      setError(t('chat.attach.hintUnavailable'));
+      return;
+    }
     setInput('');
+    setPendingImages([]);
     setError(null);
     setBusy(true);
     const settings = loadSettings();
+    const userDisplay =
+      text ||
+      t('chat.internal.userAttachmentsLine')
+        .replace('{n}', String(pending.length))
+        .replace('{names}', pending.map((p) => p.name).join(', '));
     const userMsg: ChatMessage = {
       id: makeId(),
       role: 'user',
-      content: text,
+      content: userDisplay,
       createdAt: isoNow(),
+      ...(pending.length ? { attachments: pending } : {}),
     };
     const prior = messages;
     const nextMsgs = [...prior, userMsg];
@@ -574,13 +717,29 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     const ac = new AbortController();
     abortRef.current = ac;
 
+    const modelText = text || t('chat.internal.attachmentsOnlyBody');
+    const needsMm = pending.length > 0 || threadUsesImageInputs(prior);
+    let partsToClose: LanguageModelMessageContent[] | null = null;
+
     try {
+      if (lmRef.current && lmUsesImagesRef.current !== needsMm) {
+        try {
+          lmRef.current.destroy();
+        } catch {
+          /* ignore */
+        }
+        lmRef.current = null;
+        lmUsesImagesRef.current = false;
+      }
+
       if (!lmRef.current) {
         const geo = await resolveApproximateLocation(2600);
         const ctx = defaultSessionSystemContext(lang, geo);
-        const initial = buildSessionInitialPrompts(settings, prior, ctx);
+        const initial = await buildSessionInitialPromptsAsync(settings, prior, ctx, {
+          attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
+        });
         const session = await LanguageModel.create({
-          ...LM_CORE,
+          ...lmCoreForThreadUsesImages(needsMm),
           ...(initial ? { initialPrompts: initial } : {}),
           monitor(m) {
             m.addEventListener('downloadprogress', (ev) => {
@@ -591,6 +750,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
           },
         });
         lmRef.current = session;
+        lmUsesImagesRef.current = needsMm;
         setModelUiName(modelLabelForSession(session, t));
         setDownloadPct(null);
       }
@@ -599,19 +759,42 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         throw new Error('error.noLm');
       }
       let acc = '';
-      const stream = session.promptStreaming(text, { signal: ac.signal });
-      await consumeTextStream(
-        stream,
-        (chunk) => {
-          acc += chunk;
-          setMessages((prev) => {
-            const out = prev.map((m) => (m.id === assistantId ? { ...m, content: acc } : m));
-            saveMessages(activeSessionId, out);
-            return out;
-          });
-        },
-        ac.signal,
-      );
+      if (pending.length === 0) {
+        const stream = session.promptStreaming(text, { signal: ac.signal });
+        await consumeTextStream(
+          stream,
+          (chunk) => {
+            acc += chunk;
+            setMessages((prev) => {
+              const out = prev.map((m) => (m.id === assistantId ? { ...m, content: acc } : m));
+              saveMessages(activeSessionId, out);
+              return out;
+            });
+          },
+          ac.signal,
+        );
+      } else {
+        const parts: LanguageModelMessageContent[] = [{ type: 'text', value: modelText }];
+        for (const att of pending) {
+          parts.push({ type: 'image', value: await dataUrlToImageBitmap(att.dataUrl) });
+        }
+        partsToClose = parts;
+        const stream = session.promptStreaming([{ role: 'user', content: parts }], {
+          signal: ac.signal,
+        });
+        await consumeTextStream(
+          stream,
+          (chunk) => {
+            acc += chunk;
+            setMessages((prev) => {
+              const out = prev.map((m) => (m.id === assistantId ? { ...m, content: acc } : m));
+              saveMessages(activeSessionId, out);
+              return out;
+            });
+          },
+          ac.signal,
+        );
+      }
       const finalThread: ChatMessage[] = [...nextMsgs, { ...assistantShell, content: acc }];
       const userCount = nextMsgs.filter((m) => m.role === 'user').length;
       const interval = settings.chatTitleRefreshEveryUserMessages;
@@ -661,11 +844,23 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         });
       }
     } finally {
+      if (partsToClose) closeImageBitmaps(partsToClose);
       setBusy(false);
       abortRef.current = null;
       setDownloadPct(null);
     }
-  }, [activeSessionId, busy, input, lang, messages, nanoLmRuntimeOk, persistMessages, t]);
+  }, [
+    activeSessionId,
+    busy,
+    imageInputSupported,
+    input,
+    lang,
+    messages,
+    nanoLmRuntimeOk,
+    pendingImages,
+    persistMessages,
+    t,
+  ]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -795,8 +990,11 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   }, [busy, nanoLmRuntimeOk, refiningSystemPrompt, settingsDraft.systemPrompt, t]);
 
   const canSendMessage = useMemo(
-    () => Boolean(activeSessionId) && !busy && input.trim().length > 0,
-    [activeSessionId, busy, input],
+    () =>
+      Boolean(activeSessionId) &&
+      !busy &&
+      (input.trim().length > 0 || pendingImages.length > 0),
+    [activeSessionId, busy, input, pendingImages.length],
   );
 
   const listableSessions = useMemo(
@@ -900,7 +1098,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
           ) : null}
           <button
             type="button"
-            className="side-btn"
+            className="side-btn sidebar-nav-new-chat"
             onClick={() => void openNewChat()}
             title={t('nav.newChat')}
             aria-label={t('nav.newChat')}
@@ -1085,6 +1283,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                   <strong>{t('empty.title')}</strong>
                   <p>{t('empty.bodyWhere')}</p>
                   <p>{t('empty.bodyKeys')}</p>
+                  {imageInputSupported ? <p>{t('empty.attachHint')}</p> : null}
                 </div>
               ) : (
                 messages.map((m, i) => {
@@ -1100,7 +1299,23 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                               <MessageTimestamp createdAt={m.createdAt} lang={lang} t={t} />
                             </div>
                           </div>
-                          <div className="msg-body">{m.content}</div>
+                          {m.attachments?.length ? (
+                            <div className="msg-attachments" aria-label={t('chat.attach.images')}>
+                              {m.attachments.map((a) => (
+                                <div key={a.id} className="msg-attachment-card">
+                                  <img
+                                    src={a.dataUrl}
+                                    alt={a.name}
+                                    className="msg-attachment-image"
+                                  />
+                                  <div className="msg-attachment-meta">
+                                    <strong>{a.name}</strong>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          {m.content.trim() ? <div className="msg-body">{m.content}</div> : null}
                         </div>
                       </div>
                     );
@@ -1127,24 +1342,6 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
               )}
             </div>
 
-            {messages.some((m) => m.role === 'user') ? (
-              <div className="chat-main-toolbar">
-                <button
-                  type="button"
-                  className="btn btn-ghost chat-summary-toolbar-btn"
-                  disabled={busy || summaryInFlight}
-                  onClick={() => {
-                    const label =
-                      sessions.find((s) => s.id === activeSessionId)?.title ?? t('defaultChatTitle');
-                    openChatSummary(activeSessionId, label, messages);
-                  }}
-                >
-                  <AiActionIcon size={15} />
-                  <span>{t('chat.summary.view')}</span>
-                </button>
-              </div>
-            ) : null}
-
             <div className="composer">
               {busy ? (
                 <div className="composer-meta-strip composer-meta-strip-busy">
@@ -1163,17 +1360,95 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                   void send();
                 }}
               >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="composer-file-input"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                  onChange={(e) => void addImageFiles(e.target.files)}
+                />
+                <div
+                  className="composer-meta-mobile"
+                  role="group"
+                  aria-label={t('composer.mobileIdentityAria')}
+                >
+                  <div className="composer-mobile-chip composer-mobile-chip--assistant">
+                    <span className="composer-mobile-chip-label">{t('composer.mobileChipAssistant')}</span>
+                    <span className="composer-mobile-chip-value">{modelUiName}</span>
+                  </div>
+                  {settingsDraft.preferredName.trim() ? (
+                    <div className="composer-mobile-chip composer-mobile-chip--you">
+                      <span className="composer-mobile-chip-label">{t('composer.mobileChipYou')}</span>
+                      <span className="composer-mobile-chip-value">
+                        {settingsDraft.preferredName.trim()}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
                 <div className="composer-left-stack">
-                  <div className="composer-model-discrete composer-model-above-rail" aria-current="true">
+                  <div
+                    className="composer-model-discrete composer-model-above-rail composer-desktop-only"
+                    aria-current="true"
+                  >
                     <span className="composer-model-row">
                       <span className="composer-model-name-wrap">
                         <span className="composer-model-name">{modelUiName}</span>
                       </span>
                     </span>
                   </div>
-                  <div className="composer-rail" role="toolbar" aria-label={t('composer.toolbarAria')} />
+                  <div className="composer-rail" role="toolbar" aria-label={t('composer.toolbarAria')}>
+                    {imageInputSupported ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-icon composer-rail-btn composer-attach-btn"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={busy || !activeSessionId}
+                        title={t('chat.attach.images')}
+                        aria-label={t('chat.attach.images')}
+                      >
+                        <IconPaperclip size={17} />
+                      </button>
+                    ) : null}
+                    {messages.some((m) => m.role === 'user') ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-icon composer-rail-btn composer-summary-btn"
+                        disabled={busy || summaryInFlight || !activeSessionId}
+                        onClick={() => {
+                          const label =
+                            sessions.find((s) => s.id === activeSessionId)?.title ??
+                            t('defaultChatTitle');
+                          openChatSummary(activeSessionId, label, messages);
+                        }}
+                        title={t('chat.summary.view')}
+                        aria-label={t('chat.summary.view')}
+                      >
+                        <IconChatSummary size={17} />
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="composer-field-wrap composer-input-shell">
+                  {pendingImages.length ? (
+                    <div className="composer-attachments" aria-label={t('chat.attach.images')}>
+                      {pendingImages.map((a) => (
+                        <div key={a.id} className="attachment-pill">
+                          <img src={a.dataUrl} alt="" className="attachment-thumb" />
+                          <span>{a.name}</span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPendingImages((prev) => prev.filter((x) => x.id !== a.id))
+                            }
+                            aria-label={t('chat.attach.removeAria')}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                   <textarea
                     ref={inputRef}
                     className="composer-textarea"
@@ -1187,15 +1462,15 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                   />
                 </div>
                 <div className="composer-right-stack">
-                  {loadSettings().preferredName.trim() ? (
+                  {settingsDraft.preferredName.trim() ? (
                     <div
-                      className="composer-model-discrete composer-model-above-rail composer-user-above-send"
+                      className="composer-model-discrete composer-model-above-rail composer-user-above-send composer-desktop-only"
                       aria-label={t('settings.preferredName')}
                     >
                       <span className="composer-model-row">
                         <span className="composer-model-name-wrap">
                           <span className="composer-model-name">
-                            {loadSettings().preferredName.trim()}
+                            {settingsDraft.preferredName.trim()}
                           </span>
                         </span>
                       </span>
@@ -1236,6 +1511,21 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
             </div>
         </>
       </main>
+
+      <button
+        type="button"
+        className="fab-new-chat"
+        onClick={() => void openNewChat()}
+        title={t('nav.newChat')}
+        aria-label={t('nav.newChat')}
+      >
+        <svg className="fab-new-chat-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M11 5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6V5Z"
+            fill="currentColor"
+          />
+        </svg>
+      </button>
 
       <DraggableDialog
         open={settingsOpen}

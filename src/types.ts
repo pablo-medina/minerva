@@ -2,11 +2,21 @@ export type ThemeMode = 'dark' | 'light';
 
 export type AppLang = 'en' | 'es' | 'es-AR';
 
+/** Persisted image sent with a user message (data URL for storage and UI). */
+export type ChatImageAttachment = {
+  id: string;
+  name: string;
+  mime?: string;
+  dataUrl: string;
+};
+
 export type ChatMessage = {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   createdAt: string;
+  /** Optional images included in this user turn (on-device multimodal Prompt API). */
+  attachments?: ChatImageAttachment[];
 };
 
 export type ChatSession = {

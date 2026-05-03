@@ -110,7 +110,23 @@ Rules:
   'chat.code.download': 'Download as file',
   'chat.code.copyAria': 'Copy code to clipboard',
   'chat.code.downloadAria': 'Download code as a text file',
-  'composer.toolbarAria': 'Message composer',
+  'composer.toolbarAria': 'Attach images and view chat summary',
+  'composer.mobileIdentityAria': 'Who is speaking in this thread',
+  'composer.mobileChipAssistant': 'Assistant',
+  'composer.mobileChipYou': 'You',
+  'chat.attach.images': 'Attach images',
+  'chat.attach.hintUnavailable':
+    'Image input requires the Prompt API multimodal flag in Chrome (see How to enable Gemini Nano).',
+  'chat.attach.removeAria': 'Remove attachment',
+  'chat.internal.userAttachmentsLine': 'Attached {n} image(s): {names}',
+  'chat.internal.attachmentsOnlyBody':
+    'Review the attached image(s) and answer according to the user’s instructions.',
+  'chat.attachments.maxCount': 'At most {n} images per message.',
+  'chat.attachments.fileTooLarge': '"{name}" exceeds the size limit ({limit}).',
+  'chat.attachments.unsupportedFormat': '"{name}" is not a supported image type.',
+  'chat.attachments.imageReadFailed': 'Could not read the image.',
+  'empty.attachHint':
+    'With the multimodal Chrome flag enabled, you can attach images using the paperclip next to the field.',
   'chat.time.justNow': 'Just now',
   'model.fallbackShort': 'AI',
   'placeholder': 'Write a message…',
@@ -227,13 +243,29 @@ Reglas:
   'chat.code.download': 'Descargar como archivo',
   'chat.code.copyAria': 'Copiar el código al portapapeles',
   'chat.code.downloadAria': 'Descargar el código como archivo de texto',
-  'composer.toolbarAria': 'Compositor de mensajes',
+  'composer.toolbarAria': 'Adjuntar imágenes y ver resumen del chat',
+  'composer.mobileIdentityAria': 'Quién habla en este chat',
+  'composer.mobileChipAssistant': 'Asistente',
+  'composer.mobileChipYou': 'Tú',
   'chat.time.justNow': 'Recién',
   'model.fallbackShort': 'IA',
   'placeholder': 'Escribí un mensaje…',
   'empty.title': 'Empezá una conversación',
   'empty.bodyWhere': 'Los mensajes quedan en este navegador.',
   'empty.bodyKeys': 'Usá Intro para enviar; Mayús+Intro para avanzar a la siguiente línea.',
+  'chat.attach.images': 'Adjuntar imágenes',
+  'chat.attach.hintUnavailable':
+    'Las imágenes requieren el flag multimodal de la Prompt API en Chrome (mirá “Cómo habilitar Gemini Nano”).',
+  'chat.attach.removeAria': 'Quitar adjunto',
+  'chat.internal.userAttachmentsLine': 'Adjunté {n} imagen(es): {names}',
+  'chat.internal.attachmentsOnlyBody':
+    'Revisá la(s) imagen(es) adjunta(s) y respondé según las instrucciones del usuario.',
+  'chat.attachments.maxCount': 'Como máximo {n} imágenes por mensaje.',
+  'chat.attachments.fileTooLarge': '"{name}" supera el límite de tamaño ({limit}).',
+  'chat.attachments.unsupportedFormat': '"{name}" no es un tipo de imagen admitido.',
+  'chat.attachments.imageReadFailed': 'No se pudo leer la imagen.',
+  'empty.attachHint':
+    'Con el flag multimodal de Chrome habilitado, podés adjuntar imágenes con el clip junto al campo.',
   'defaultChatTitle': 'Chat nuevo',
   'downloading': 'Descargando modelo… {pct}%',
   'waiting': 'Generando…',
@@ -244,6 +276,10 @@ Reglas:
 const esAR: Dict = {
   ...es,
   'chat.message.roleUser': 'Vos',
+  'composer.mobileChipYou': 'Vos',
+  'chat.internal.userAttachmentsLine': 'Adjunté {n} imagen(es): {names}',
+  'chat.internal.attachmentsOnlyBody':
+    'Revisá las imágenes adjuntas y respondé según lo que pida la persona.',
 };
 
 export type Translator = (key: string) => string;

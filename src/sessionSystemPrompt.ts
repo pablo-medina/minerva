@@ -1,3 +1,4 @@
+import { dataUrlToImageBitmap } from './chatImageAttachments';
 import type { AppLang, ChatMessage, LocalSettings } from './types';
 
 export type SessionGeo = { lat: number; lon: number };
@@ -105,13 +106,19 @@ export function buildSessionSystemContent(settings: LocalSettings, ctx: SessionS
   return parts.join('\n\n').trim();
 }
 
-export function buildSessionInitialPrompts(
+export type BuildSessionInitialPromptsOptions = {
+  /** Shown as the text part when a historical user turn has images but empty text (model input). */
+  attachmentsOnlyPrompt: string;
+};
+
+export async function buildSessionInitialPromptsAsync(
   settings: LocalSettings,
   history: ChatMessage[],
   ctx: SessionSystemContext,
-): LanguageModelCreateOptions['initialPrompts'] {
+  opts: BuildSessionInitialPromptsOptions,
+): Promise<LanguageModelCreateOptions['initialPrompts']> {
   const sysTrim = buildSessionSystemContent(settings, ctx);
-  const out: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+  const out: Array<LanguageModelSystemMessage | LanguageModelMessage> = [];
   if (sysTrim) {
     out.push({ role: 'system', content: sysTrim });
   }
@@ -122,8 +129,27 @@ export function buildSessionInitialPrompts(
       }
       continue;
     }
-    if (m.role === 'user' || m.role === 'assistant') {
-      out.push({ role: m.role, content: m.content });
+    if (m.role === 'assistant') {
+      out.push({ role: 'assistant', content: m.content });
+      continue;
+    }
+    if (m.role === 'user') {
+      const imgs = m.attachments ?? [];
+      if (!imgs.length) {
+        out.push({ role: 'user', content: m.content });
+        continue;
+      }
+      const parts: LanguageModelMessageContent[] = [];
+      const text = m.content.trim();
+      if (text) {
+        parts.push({ type: 'text', value: text });
+      } else {
+        parts.push({ type: 'text', value: opts.attachmentsOnlyPrompt });
+      }
+      for (const att of imgs) {
+        parts.push({ type: 'image', value: await dataUrlToImageBitmap(att.dataUrl) });
+      }
+      out.push({ role: 'user', content: parts });
     }
   }
   return out.length ? (out as LanguageModelCreateOptions['initialPrompts']) : undefined;

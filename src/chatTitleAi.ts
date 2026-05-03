@@ -20,7 +20,13 @@ export function buildChatTitlePrompt(lang: AppLang, messages: ChatMessage[]): st
   const slice = messages.slice(-TITLE_TRANSCRIPT_MAX_MESSAGES);
   const transcript = slice
     .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.trim()}`)
+    .map((m) => {
+      let line = `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.trim()}`;
+      if (m.role === 'user' && m.attachments?.length) {
+        line += ` [${m.attachments.length} image(s)]`;
+      }
+      return line;
+    })
     .join('\n');
 
   return `You name chat threads for a sidebar list. Read the conversation and output ONE short title (max ${AUTO_TITLE_MAX_LEN} characters).

@@ -694,6 +694,106 @@ html[data-theme='light'] .markdown-body blockquote {
   background: transparent;
 }
 
+.composer-meta-mobile {
+  display: none;
+  align-items: stretch;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  width: 100%;
+  padding: 0.05rem 0 0.15rem;
+}
+
+.composer-mobile-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.32rem 0.55rem 0.34rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+  background: color-mix(in oklab, var(--bg-elevated) 75%, var(--bg-panel) 25%);
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.composer-mobile-chip-label {
+  flex-shrink: 0;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.composer-mobile-chip-value {
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-mobile-chip--assistant {
+  border-color: color-mix(in oklab, var(--accent) 28%, var(--border) 72%);
+  background: color-mix(in oklab, var(--accent) 9%, var(--bg-elevated) 91%);
+}
+
+.composer-mobile-chip--you {
+  border-color: color-mix(in oklab, var(--border) 88%, transparent);
+}
+
+.fab-new-chat {
+  display: none;
+  position: fixed;
+  z-index: 18;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(6.35rem, calc(5.85rem + env(safe-area-inset-bottom)));
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid color-mix(in oklab, var(--accent) 38%, var(--border) 62%);
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--bg-elevated) 82%, var(--accent) 18%);
+  color: var(--accent);
+  cursor: pointer;
+  box-shadow:
+    0 2px 14px rgba(0, 0, 0, 0.22),
+    0 0 0 1px color-mix(in oklab, var(--border) 55%, transparent);
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.16s ease,
+    opacity 0.16s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.fab-new-chat:hover:not(:disabled) {
+  transform: scale(1.04);
+  box-shadow:
+    0 4px 20px rgba(0, 122, 255, 0.18),
+    0 0 0 1px color-mix(in oklab, var(--accent) 45%, transparent);
+}
+
+.fab-new-chat:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.fab-new-chat-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+
+html[data-theme='light'] .fab-new-chat {
+  background: color-mix(in oklab, #fff 88%, var(--accent) 12%);
+  box-shadow:
+    0 2px 12px rgba(15, 23, 42, 0.1),
+    0 0 0 1px color-mix(in oklab, var(--border) 70%, transparent);
+}
+
 .composer-meta-strip {
   max-width: 800px;
   margin: 0 auto 0.1rem;
@@ -840,6 +940,115 @@ html[data-theme='light'] .markdown-body blockquote {
   justify-content: center;
   gap: 0.12rem;
   flex-shrink: 0;
+}
+
+.composer-file-input {
+  display: none;
+}
+
+.composer .composer-rail-btn.btn-ghost {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.composer .composer-rail-btn.btn-ghost:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--text) 7%, transparent);
+  color: var(--text);
+  transform: none;
+}
+
+.composer .composer-rail-btn.btn-ghost:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 38%, transparent);
+  outline-offset: 1px;
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.45rem 0.55rem 0;
+  max-width: 100%;
+}
+
+.attachment-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.24rem 0.5rem 0.24rem 0.6rem;
+  background: var(--bg-elevated);
+  font-size: 0.76rem;
+}
+
+.attachment-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
+.attachment-pill button {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.attachment-pill button:hover {
+  color: var(--text);
+  background: var(--overlay-soft);
+}
+
+.msg-attachments {
+  margin-top: 0.45rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.msg-attachment-card {
+  border: 1px solid color-mix(in oklab, var(--border) 90%, transparent);
+  border-radius: 10px;
+  padding: 0.5rem;
+  background: color-mix(in oklab, var(--bg-elevated) 84%, transparent);
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.msg-attachment-image {
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.msg-attachment-meta {
+  min-width: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.msg-attachment-meta strong {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .composer-right-stack > .btn-primary {
@@ -1019,27 +1228,10 @@ html[data-theme='light'] .composer-input-shell:focus-within {
   font-size: 0.86rem;
 }
 
-.chat-main-toolbar {
-  max-width: 800px;
-  width: 100%;
-  margin: 0 auto;
-  padding: 0 1rem 0.35rem;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-}
-
-.chat-summary-toolbar-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.82rem;
-  padding: 0.28rem 0.55rem;
-  color: var(--accent);
-}
-
-.chat-summary-toolbar-btn:disabled {
-  opacity: 0.45;
+.composer-rail-btn {
+  box-sizing: border-box;
+  min-width: 34px;
+  min-height: 34px;
 }
 
 .summary-dialog {
@@ -1709,25 +1901,174 @@ html[data-theme='light'] .minerva-banner-info {
     height: 2px;
   }
 
+  .sidebar-nav-new-chat {
+    display: none !important;
+  }
+
+  .fab-new-chat {
+    display: grid;
+    place-items: center;
+  }
+
   .main {
     min-height: 0;
     width: 100%;
   }
 
   .messages {
-    padding: 1rem 0.8rem 0.95rem;
+    padding: 1rem 0.8rem max(3.85rem, calc(2.75rem + env(safe-area-inset-bottom)));
   }
 
   .composer {
     position: sticky;
     bottom: 0;
     z-index: 14;
-    padding: 0.6rem 0.65rem max(0.75rem, env(safe-area-inset-bottom));
+    padding: 0.55rem 0.7rem max(0.85rem, env(safe-area-inset-bottom));
+    background: linear-gradient(
+      to top,
+      color-mix(in oklab, var(--bg-deep) 92%, transparent) 0%,
+      color-mix(in oklab, var(--bg-deep) 55%, transparent) 55%,
+      transparent 100%
+    );
+  }
+
+  .composer-meta-mobile {
+    display: flex;
+  }
+
+  .composer-inner {
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 0.48rem 0.4rem;
+    padding: 0.35rem 0 0.12rem;
+  }
+
+  .composer-inner > .composer-meta-mobile {
+    order: 0;
+    flex: 1 0 100%;
+    width: 100%;
+  }
+
+  .composer-inner > .composer-field-wrap {
+    order: 1;
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .composer-inner > .composer-left-stack,
+  .composer-inner > .composer-right-stack {
+    order: 2;
+  }
+
+  .composer-input-shell {
+    border-radius: 14px;
+    box-shadow:
+      0 1px 0 color-mix(in oklab, var(--border) 62%, transparent),
+      inset 0 1px 0 color-mix(in oklab, var(--text) 5%, transparent);
+  }
+
+  .composer-left-stack {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.2rem;
+    max-width: none;
+    margin-top: 0;
+  }
+
+  .composer-left-stack .composer-rail {
+    margin-top: 0;
+  }
+
+  .composer-right-stack {
+    max-width: none;
+    align-items: flex-end;
+    margin-left: auto;
+  }
+
+  .composer-right-stack .btn-primary {
+    min-width: 92px;
+    min-height: 44px;
+    height: 44px;
+    padding: 0 1.15rem;
+    font-size: 0.9rem;
+    border-radius: 999px;
+    font-weight: 600;
+    box-shadow: 0 2px 12px color-mix(in oklab, var(--accent) 24%, transparent);
+  }
+
+  .composer-rail-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .composer-desktop-only {
+    display: none !important;
   }
 
   .composer .composer-textarea {
     min-height: 58px;
     max-height: 200px;
     font-size: 16px;
+    padding: 0.62rem 0.75rem;
+  }
+
+  html[data-theme='light'] .composer {
+    background: linear-gradient(
+      to top,
+      color-mix(in oklab, var(--bg-deep) 96%, #fff 4%) 0%,
+      color-mix(in oklab, var(--bg-deep) 70%, transparent) 50%,
+      transparent 100%
+    );
+  }
+}
+
+@media (min-width: 1025px) {
+  .fab-new-chat {
+    display: none !important;
+  }
+
+  .composer {
+    background: transparent;
+  }
+
+  .composer-inner {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    align-items: stretch;
+    gap: 0.35rem;
+    padding: 0.15rem 0;
+  }
+
+  .composer-inner > .composer-meta-mobile {
+    display: none !important;
+  }
+
+  .composer-inner > .composer-field-wrap {
+    order: unset;
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+  }
+
+  .composer-inner > .composer-left-stack {
+    order: unset;
+    flex: 0 1 auto;
+    max-width: 42%;
+    width: auto;
+  }
+
+  .composer-inner > .composer-right-stack {
+    order: unset;
+    flex: 0 1 auto;
+    max-width: 42%;
+    width: auto;
+    margin-left: unset;
+  }
+
+  .composer-desktop-only {
+    display: block;
   }
 }

@@ -38,6 +38,8 @@ export function fingerprintForChatSummaryCache(messages: ChatMessage[]): string 
     step('\n');
     step(m.content);
     step('\n');
+    step(String(m.attachments?.length ?? 0));
+    step('\n');
   }
   return `${slice.length}:${h.toString(16)}`;
 }
@@ -47,7 +49,13 @@ export function buildChatTranscriptForSummary(messages: ChatMessage[]): string {
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .slice(-MAX_TRANSCRIPT_MESSAGES);
   let s = slice
-    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.trim()}`)
+    .map((m) => {
+      let line = `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.trim()}`;
+      if (m.role === 'user' && m.attachments?.length) {
+        line += ` [${m.attachments.length} image(s)]`;
+      }
+      return line;
+    })
     .join('\n\n');
   if (s.length > MAX_TRANSCRIPT_CHARS) {
     s = s.slice(-MAX_TRANSCRIPT_CHARS);

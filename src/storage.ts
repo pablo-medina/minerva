@@ -1,5 +1,5 @@
 import { LS_ACTIVE, LS_SESSIONS, LS_SETTINGS, MSG_PREFIX, messagesKey } from './constants';
-import type { ChatMessage, ChatSession, LocalSettings } from './types';
+import type { ChatImageAttachment, ChatMessage, ChatSession, LocalSettings } from './types';
 
 export const DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES = 8;
 
@@ -91,8 +91,24 @@ export function loadMessages(sessionId: string): ChatMessage[] {
           o.role === 'user' || o.role === 'assistant' || o.role === 'system' ? o.role : null;
         const content = typeof o.content === 'string' ? o.content : '';
         const createdAt = typeof o.createdAt === 'string' ? o.createdAt : new Date().toISOString();
+        let attachments: ChatImageAttachment[] | undefined;
+        const rawAtt = o.attachments;
+        if (Array.isArray(rawAtt) && rawAtt.length) {
+          const parsed: ChatImageAttachment[] = [];
+          for (const a of rawAtt) {
+            if (!a || typeof a !== 'object') continue;
+            const ao = a as Record<string, unknown>;
+            const aid = typeof ao.id === 'string' ? ao.id : '';
+            const name = typeof ao.name === 'string' ? ao.name : '';
+            const dataUrl = typeof ao.dataUrl === 'string' ? ao.dataUrl : '';
+            if (!aid || !dataUrl.startsWith('data:')) continue;
+            const mime = typeof ao.mime === 'string' ? ao.mime : undefined;
+            parsed.push({ id: aid, name: name || 'image', mime, dataUrl });
+          }
+          if (parsed.length) attachments = parsed;
+        }
         if (!id || !role) return null;
-        return { id, role, content, createdAt };
+        return { id, role, content, createdAt, ...(attachments ? { attachments } : {}) };
       })
       .filter((x): x is ChatMessage => Boolean(x));
   } catch {

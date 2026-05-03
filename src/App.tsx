@@ -1395,7 +1395,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                     <div className="chat-dialog-row-actions-icons">
                       <button
                         type="button"
-                        className="chat-dialog-icon-btn chat-dialog-icon-btn-ai"
+                        className="chat-dialog-icon-btn chat-dialog-icon-btn-summary"
                         disabled={busy || summaryInFlight}
                         onClick={() => {
                           closeChatsPanel();
@@ -1404,7 +1404,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                         title={t('chat.summary.view')}
                         aria-label={t('chat.summary.view')}
                       >
-                        <AiActionIcon size={15} />
+                        <IconChatSummary size={17} />
                       </button>
                       <button
                         type="button"

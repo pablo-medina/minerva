@@ -1225,8 +1225,19 @@ html[data-theme='light'] .composer-inner--drop-hover .composer-input-shell {
   background: var(--bg-panel);
   display: flex;
   align-items: stretch;
-  gap: 0.35rem;
+  gap: 0.25rem;
   overflow: hidden;
+  transition:
+    background 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.32s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.chat-dialog-item:hover,
+.chat-dialog-item:focus-within {
+  background: color-mix(in oklab, var(--bg-elevated) 52%, var(--bg-panel));
+  border-color: color-mix(in oklab, var(--accent) 14%, var(--border));
+  box-shadow: 0 2px 12px color-mix(in oklab, var(--fg) 6%, transparent);
 }
 
 .chat-dialog-open {
@@ -1239,10 +1250,7 @@ html[data-theme='light'] .composer-inner--drop-hover .composer-input-shell {
   padding: 0.5rem 0.65rem;
   cursor: pointer;
   font: inherit;
-}
-
-.chat-dialog-open:hover {
-  background: var(--overlay-soft);
+  transition: color 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .chat-dialog-open-title {
@@ -1257,46 +1265,65 @@ html[data-theme='light'] .composer-inner--drop-hover .composer-input-shell {
 .chat-dialog-row-actions-icons {
   display: flex;
   align-items: center;
-  padding: 0.2rem 0.35rem;
-  gap: 0.2rem;
+  flex-shrink: 0;
+  padding: 0.15rem 0.4rem 0.15rem 0.15rem;
+  gap: 0.15rem;
 }
 
 .chat-dialog-icon-btn {
-  min-width: 32px;
-  min-height: 32px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   font-size: 1.1rem;
   line-height: 1;
   display: grid;
   place-items: center;
+  transition:
+    color 0.26s cubic-bezier(0.4, 0, 0.2, 1),
+    background 0.26s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.chat-dialog-icon-btn:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 45%, transparent);
+  outline-offset: 1px;
 }
 
 .chat-dialog-icon-btn-danger {
   color: var(--danger);
-  border-color: color-mix(in oklab, var(--danger) 35%, var(--border));
 }
 
 .chat-dialog-icon-btn-danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  background: color-mix(in oklab, var(--danger) 14%, transparent);
+  color: var(--danger);
 }
 
-.chat-dialog-icon-btn-ai {
-  color: var(--accent);
-  border-color: color-mix(in oklab, var(--accent) 38%, var(--border));
-}
-
-.chat-dialog-icon-btn-ai:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+.chat-dialog-icon-btn-summary {
   color: var(--accent);
 }
 
-.chat-dialog-icon-btn-ai:disabled {
+.chat-dialog-icon-btn-summary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.chat-dialog-icon-btn-summary:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .chat-dialog-icon-btn:hover:not(:disabled) {
+    transform: scale(1.04);
+  }
+}
+
+.chat-dialog-icon-btn:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 .chat-dialog-empty {

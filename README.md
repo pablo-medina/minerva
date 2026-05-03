@@ -1,15 +1,15 @@
 # Minerva
 
-Interfaz liviana para chatear con **Gemini Nano** en el dispositivo, usando la [Prompt API de Chrome](https://developer.chrome.com/docs/ai/prompt-api). Los datos quedan en `localStorage` del navegador; no hay servidor propio ni inicio de sesión.
+Lightweight UI to chat with **Gemini Nano** on-device using Chrome’s [Prompt API](https://developer.chrome.com/docs/ai/prompt-api). Data stays in the browser’s `localStorage`; there is no custom backend or sign-in.
 
-**Autor:** Pablo Medina · **Licencia:** MIT (texto en `LICENSE`).
+**Author:** Pablo Medina
 
-## Requisitos
+## Requirements
 
-- Chrome reciente con la API habilitada (flags de experimentación según la documentación de Google).
-- Ejecutar en `localhost` o el origen que indique Google para desarrollo.
+- A recent Chrome build with the API enabled (experimental flags as described in Google’s documentation).
+- Run the app on `localhost` or another origin allowed by Google for development.
 
-## Desarrollo
+## Development
 
 ```cmd
 cd minerva
@@ -17,7 +17,7 @@ npm install
 npm run dev
 ```
 
-Abre `http://localhost:5174`.
+Then open `http://localhost:5174`.
 
 ## Build
 
@@ -25,3 +25,14 @@ Abre `http://localhost:5174`.
 npm run build
 npm run preview
 ```
+
+## License
+
+Minerva is released under the **MIT License**. Copyright © 2026 Pablo Medina.
+
+The full license text is in the [`LICENSE`](LICENSE) file in the repository root. By using or distributing this software, you agree to the terms stated there.
+
+## Language policy
+
+- **Source code, comments, JSDoc, and this README** are maintained in **English**.
+- **User-visible strings** live in **`src/i18n.ts`** (`en` base dictionary; `es` / `es-AR` overrides). The UI must use the translator (`t('…')`), not hardcoded copy in components.

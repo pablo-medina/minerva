@@ -105,6 +105,7 @@ Rules:
   'chat.summary.loading': 'Summarizing…',
   'chat.summary.empty': 'This chat has no messages to summarize yet.',
   'chat.summary.error': 'Could not generate a summary. Try again.',
+  'composer.toolbarAria': 'Message composer',
   'chat.time.justNow': 'Just now',
   'model.fallbackShort': 'AI',
   'placeholder': 'Write a message…',
@@ -216,6 +217,7 @@ Reglas:
   'chat.summary.loading': 'Resumiendo…',
   'chat.summary.empty': 'Este chat no tiene mensajes para resumir todavía.',
   'chat.summary.error': 'No se pudo generar el resumen. Probá de nuevo.',
+  'composer.toolbarAria': 'Compositor de mensajes',
   'chat.time.justNow': 'Recién',
   'model.fallbackShort': 'IA',
   'placeholder': 'Escribí un mensaje…',
@@ -242,7 +244,7 @@ export function createTranslator(lang: AppLang): Translator {
     dict[key] ?? (lang === 'es-AR' ? es[key] : undefined) ?? en[key] ?? key;
 }
 
-/** Idioma del sistema (navigator) mapeado a los idiomas soportados por la app. */
+/** Maps the browser language (`navigator`) to a supported app language. */
 export function detectBrowserLang(): AppLang {
   if (typeof navigator === 'undefined') return 'en';
   const raw = (navigator.language || (navigator as Navigator & { userLanguage?: string }).userLanguage || 'en')

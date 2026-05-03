@@ -18,12 +18,12 @@ export type ChatSession = {
 
 export type LocalSettings = {
   systemPrompt: string;
-  /** Cómo querés que el asistente te llame (se envía al modelo junto al prompt del sistema). */
+  /** How the assistant should address the user (sent with the system prompt when a session starts). */
   preferredName: string;
   /**
-   * Tras el primer mensaje del usuario, el título se genera con la IA.
-   * Si es mayor que 0, se vuelve a generar cada esta cantidad de mensajes del usuario (1, 1+N, 1+2N…).
-   * Si es 0, solo el primer título automático.
+   * After the first user message, the chat title is generated with on-device AI.
+   * If greater than 0, the title is refreshed every N user messages (1, 1+N, 1+2N, …).
+   * If 0, only the first automatic title is generated.
    */
   chatTitleRefreshEveryUserMessages: number;
 };

@@ -1,18 +1,18 @@
 ---
-description: Minerva — language, i18n, docs, and UI conventions for agents
+description: Minerva — English codebase, i18n-only localized copy, docs, and UI conventions for agents
 alwaysApply: true
 ---
 
 # Minerva project conventions
 
-## Code language
+## Repository language (remember this)
 
-- Write **all code in English**: identifiers, comments, commit messages, and inline technical strings.
-- **Exception**: user-facing copy lives only in **i18n** (`src/i18n.ts` dictionaries). Do not embed Spanish/English UI strings in components except by calling the translator (`t('key')`).
+- **English everywhere** in the repo except localized UX strings: **identifiers**, **comments**, **JSDoc/TSDoc**, **README**, **package.json `description`**, commit messages, and any other developer-facing prose.
+- **Only exception:** user-facing copy belongs in **`src/i18n.ts`** (`en` as the canonical dictionary; `es` / `es-AR` for overrides). Components must use `t('key')` for labels, placeholders, `aria-label`s, errors, and markdown shown to users—never hardcoded Spanish/English in JSX/TS outside i18n.
 
 ## Documentation
 
-- **README** and any project documentation (markdown in the repo, ADRs, etc.) must be **entirely in English**.
+- **README** and any project documentation (markdown in the repo) must be **entirely in English**.
 
 ## Internationalization
 
@@ -26,4 +26,4 @@ alwaysApply: true
 
 ## On-device AI affordances
 
-- For **any control that invokes the on-device model** (refine prompt, future AI actions), use the shared **`AiActionIcon`** from `src/components/AiActionIcon.tsx` so the sparkle mark stays consistent across the app.
+- For **any control that invokes the on-device model** (refine prompt, summaries, titles, etc.), use the shared **`AiActionIcon`** from `src/components/AiActionIcon.tsx` so the sparkle mark stays consistent across the app.

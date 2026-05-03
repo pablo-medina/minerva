@@ -52,7 +52,7 @@ function isoNow(): string {
   return new Date().toISOString();
 }
 
-/** Escritorio / ratón: sí enfocar el composer. Móvil solo táctil: no (evita el teclado virtual). */
+/** Desktop / fine pointer: focus the composer. Touch-primary devices: skip (avoids opening the virtual keyboard). */
 function shouldAutoFocusComposerInput(): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
   try {
@@ -1121,7 +1121,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                       </span>
                     </span>
                   </div>
-                  <div className="composer-rail" role="toolbar" aria-label="composer" />
+                  <div className="composer-rail" role="toolbar" aria-label={t('composer.toolbarAria')} />
                 </div>
                 <div className="composer-field-wrap composer-input-shell">
                   <textarea

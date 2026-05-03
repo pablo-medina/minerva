@@ -26,7 +26,7 @@ function formatModelName(raw: string): string {
     .join(' ');
 }
 
-/** Etiqueta para burbujas y compositor: nombre del modelo si la API lo expone; si no, Gemini Nano en entornos Prompt API; si no aplica, IA/AI. */
+/** Label for bubbles and composer: model name from the API when present; else “Gemini Nano” when the Prompt API is supported; else the localized short fallback (AI/IA). */
 export function modelLabelForSession(session: LanguageModel | null, t: Translator): string {
   const fromApi = readOptionalModelName(session);
   if (fromApi) return formatModelName(fromApi);

@@ -1,4 +1,4 @@
-/** Opciones compartidas para texto (en + es), alineado a la documentación de la Prompt API. */
+/** Shared options for text input/output (en + es), aligned with the Prompt API docs. */
 export const LM_CORE: Pick<LanguageModelCreateCoreOptions, 'expectedInputs' | 'expectedOutputs'> = {
   expectedInputs: [{ type: 'text', languages: ['en', 'es'] }],
   expectedOutputs: [{ type: 'text', languages: ['en', 'es'] }],

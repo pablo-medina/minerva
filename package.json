@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Chat local con Gemini Nano en el navegador (Chrome Prompt API).",
+  "description": "On-device chat with Gemini Nano in the browser (Chrome Prompt API).",
   "author": "Pablo Medina",
   "license": "MIT",
   "scripts": {

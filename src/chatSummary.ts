@@ -19,6 +19,29 @@ function summaryLanguageHint(lang: AppLang): string {
   }
 }
 
+/** Stable fingerprint of the messages that feed the summary (same slice rules as the transcript). */
+export function fingerprintForChatSummaryCache(messages: ChatMessage[]): string {
+  const slice = messages
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .slice(-MAX_TRANSCRIPT_MESSAGES);
+  let h = 2166136261 >>> 0;
+  const step = (s: string) => {
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+  };
+  for (const m of slice) {
+    step(m.id);
+    step('\n');
+    step(m.role);
+    step('\n');
+    step(m.content);
+    step('\n');
+  }
+  return `${slice.length}:${h.toString(16)}`;
+}
+
 export function buildChatTranscriptForSummary(messages: ChatMessage[]): string {
   const slice = messages
     .filter((m) => m.role === 'user' || m.role === 'assistant')

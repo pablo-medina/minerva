@@ -98,6 +98,10 @@ export function buildSessionSystemContent(settings: LocalSettings, ctx: SessionS
   const sys = settings.systemPrompt.trim();
   if (sys) parts.push(sys);
 
+  parts.push(
+    'For a fenced block meant as a whole file, you may start with e.g. `// minerva-filename: AuthService.ts` (JS/TS), `# minerva-filename: train.py` (Python), or `<!-- minerva-filename: index.html -->` so the UI suggests that download name; omit for short snippets.',
+  );
+
   return parts.join('\n\n').trim();
 }
 

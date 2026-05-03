@@ -23,7 +23,7 @@ import {
   sessionHasUserMessage,
   wipeAllMessageKeys,
 } from './storage';
-import { summarizeChatMessages } from './chatSummary';
+import { fingerprintForChatSummaryCache, summarizeChatMessages } from './chatSummary';
 import { generateChatTitleWithOnDeviceModel, shouldRefreshChatTitle } from './chatTitleAi';
 import {
   buildSessionInitialPrompts,
@@ -263,6 +263,8 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const lmRef = useRef<LanguageModel | null>(null);
   const refineAbortRef = useRef<AbortController | null>(null);
   const summaryAbortRef = useRef<AbortController | null>(null);
+  /** In-memory summary text per session + UI language; invalidated when transcript fingerprint changes. */
+  const summaryCacheRef = useRef<Map<string, { fp: string; body: string }>>(new Map());
   const abortRef = useRef<AbortController | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -440,6 +442,9 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       } catch {
         /* ignore */
       }
+      for (const k of [...summaryCacheRef.current.keys()]) {
+        if (k.startsWith(`${id}|`)) summaryCacheRef.current.delete(k);
+      }
       const nid = makeId();
       const now = isoNow();
       const row: ChatSession = { id: nid, title: t('defaultChatTitle'), createdAt: now, updatedAt: now };
@@ -453,6 +458,9 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       localStorage.removeItem(messagesKey(id));
     } catch {
       /* ignore */
+    }
+    for (const k of [...summaryCacheRef.current.keys()]) {
+      if (k.startsWith(`${id}|`)) summaryCacheRef.current.delete(k);
     }
     persistSessionMeta(next);
     if (activeSessionId === id) {
@@ -498,6 +506,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       createdAt: now,
       updatedAt: now,
     };
+    summaryCacheRef.current.clear();
     saveSessions([row]);
     saveMessages(id, []);
     saveActiveSessionId(id);
@@ -676,7 +685,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   }, []);
 
   const openChatSummary = useCallback(
-    (sessionLabel: string, msgs: ChatMessage[]) => {
+    (sessionId: string, sessionLabel: string, msgs: ChatMessage[]) => {
       summaryAbortRef.current?.abort();
       if (!msgs.some((m) => m.role === 'user')) {
         summaryAbortRef.current = null;
@@ -685,6 +694,18 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         setSummaryInFlight(false);
         setSummaryBody('');
         setSummaryError(t('chat.summary.empty'));
+        return;
+      }
+      const fp = fingerprintForChatSummaryCache(msgs);
+      const cacheKey = `${sessionId}|${lang}`;
+      const cached = sessionId ? summaryCacheRef.current.get(cacheKey) : undefined;
+      if (cached && cached.fp === fp && cached.body.trim()) {
+        summaryAbortRef.current = null;
+        setSummarySessionLabel(sessionLabel);
+        setSummaryOpen(true);
+        setSummaryInFlight(false);
+        setSummaryBody(cached.body);
+        setSummaryError(null);
         return;
       }
       const ac = new AbortController();
@@ -706,6 +727,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
           if (ac.signal.aborted) return;
           if (full) {
             setSummaryBody(full);
+            if (sessionId) summaryCacheRef.current.set(cacheKey, { fp, body: full });
           } else {
             setSummaryBody('');
             setSummaryError(t('chat.summary.error'));
@@ -810,10 +832,38 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     [canSendMessage, send],
   );
 
+  const updateMessagesBottomFade = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const epsilon = 10;
+    const hasOverflow = el.scrollHeight > el.clientHeight + 1;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distanceFromBottom <= epsilon;
+    el.classList.toggle('messages--fade-bottom', hasOverflow && !atBottom);
+  }, []);
+
   useEffect(() => {
     if (!listRef.current) return;
     listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [messages, busy]);
+    requestAnimationFrame(() => {
+      updateMessagesBottomFade();
+      requestAnimationFrame(updateMessagesBottomFade);
+    });
+  }, [messages, busy, updateMessagesBottomFade]);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return undefined;
+    const run = () => updateMessagesBottomFade();
+    run();
+    el.addEventListener('scroll', run, { passive: true });
+    const ro = new ResizeObserver(run);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', run);
+      ro.disconnect();
+    };
+  }, [updateMessagesBottomFade, activeSessionId]);
 
   if (!nanoLmRuntimeOk) {
     return (
@@ -971,7 +1021,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                         disabled={busy || summaryInFlight}
                         onClick={() => {
                           closeChatsPanel();
-                          openChatSummary(s.title, loadMessages(s.id));
+                          openChatSummary(s.id, s.title, loadMessages(s.id));
                         }}
                         title={t('chat.summary.view')}
                         aria-label={t('chat.summary.view')}
@@ -1086,7 +1136,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                   onClick={() => {
                     const label =
                       sessions.find((s) => s.id === activeSessionId)?.title ?? t('defaultChatTitle');
-                    openChatSummary(label, messages);
+                    openChatSummary(activeSessionId, label, messages);
                   }}
                 >
                   <AiActionIcon size={15} />

@@ -1559,6 +1559,12 @@ html[data-theme='light'] .markdown-body blockquote {
   display: block;
 }
 
+/** While the chats picker is open, avoid FAB capturing taps meant for the first list row (mobile sheet). */
+.fab-new-chat--hidden {
+  display: none !important;
+  pointer-events: none;
+}
+
 html[data-theme='light'] .fab-new-chat {
   background: color-mix(in oklab, #fff 88%, var(--accent) 12%);
   box-shadow:
@@ -3238,7 +3244,8 @@ html[data-theme='light'] .minerva-banner-info {
   padding: 0.7rem 0.65rem max(0.9rem, env(safe-area-inset-bottom));
 }
 
-.drag-window-body:has(.settings-dialog-root--window) {
+.drag-window-body:has(.settings-dialog-root--window),
+.drag-window-body:has(.chat-dialog-root--window) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -3246,6 +3253,59 @@ html[data-theme='light'] .minerva-banner-info {
 
 .settings-dialog-root--window {
   height: 100%;
+}
+
+.chat-dialog-root--window {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  height: 100%;
+}
+
+.chat-dialog-root--window .chat-dialog-search {
+  flex-shrink: 0;
+}
+
+.chat-dialog-root--window .chat-dialog-list-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-dialog-root--window .chat-dialog-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.chat-dialog-summary-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 0.45rem;
+}
+
+.chat-dialog-summary-toolbar {
+  flex-shrink: 0;
+}
+
+.chat-dialog-summary-back-btn {
+  font-size: 0.84rem;
+  padding-inline: 0.5rem;
+}
+
+.chat-dialog-summary-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-dialog-summary-body .summary-dialog-scroll {
+  max-height: none;
+  flex: 1;
+  min-height: 0;
 }
 
 .settings-dialog-root--window .settings-vscode-split {

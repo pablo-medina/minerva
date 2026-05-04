@@ -583,6 +583,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [confirmClearChatsOpen, setConfirmClearChatsOpen] = useState(false);
   const [confirmClearAllDataOpen, setConfirmClearAllDataOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [chatsSummaryEmbed, setChatsSummaryEmbed] = useState(false);
   const [summarySessionLabel, setSummarySessionLabel] = useState('');
   const [summaryBody, setSummaryBody] = useState('');
   const [summaryError, setSummaryError] = useState<string | null>(null);
@@ -620,6 +621,8 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [aiPickerSearch, setAiPickerSearch] = useState('');
   const [aiPickerFilter, setAiPickerFilter] = useState<'all' | 'nano' | 'external' | 'available'>('all');
   const aiPickerSearchInputRef = useRef<HTMLInputElement>(null);
+  const chatsSearchInputRef = useRef<HTMLInputElement>(null);
+  const [chatsFilterQuery, setChatsFilterQuery] = useState('');
 
   const nanoLmRuntimeOk = useMemo(() => languageModelSupported(), []);
   const chatSelection = useMemo(() => resolveSelection(settingsDraft, 'chat'), [settingsDraft]);
@@ -1118,6 +1121,7 @@ Model id: ${trimmedModelId}`,
       setSessions(next);
       setActiveSessionId(id);
       setChatsOpen(false);
+      setChatsFilterQuery('');
       setSettingsOpen(false);
       setError(null);
       setPendingAttachments([]);
@@ -1127,17 +1131,18 @@ Model id: ${trimmedModelId}`,
     })();
   }, [sessions, t]);
 
-  const selectSession = useCallback(
-    (id: string) => {
-      if (!id || id === activeSessionId) return;
-      void (async () => {
-        await saveActiveSessionId(id);
-        setActiveSessionId(id);
-        setError(null);
-      })();
-    },
-    [activeSessionId],
-  );
+  const selectSession = useCallback((id: string) => {
+    if (!id) return;
+    void (async () => {
+      await saveActiveSessionId(id);
+      setActiveSessionId(id);
+      setError(null);
+      const next = await loadMessages(id);
+      const persisted = await loadActiveSessionId();
+      if (persisted !== id) return;
+      setMessages(next);
+    })();
+  }, []);
 
   const askDeleteSession = useCallback((id: string) => {
     setPendingDeleteId(id);
@@ -1172,16 +1177,46 @@ Model id: ${trimmedModelId}`,
         setActiveSessionId(nid);
         setInput('');
         setError(null);
+        setPendingAttachments([]);
+        setChatsOpen(false);
+        setSettingsOpen(false);
+        queueMicrotask(() => {
+          if (shouldAutoFocusComposerInput()) inputRef.current?.focus();
+        });
+        return;
+      }
+      if (wasActive) {
+        for (const s of next) {
+          if (!s.hasUserMessage) {
+            await deleteChatSession(s.id);
+          }
+        }
+        const kept = next.filter((s) => s.hasUserMessage === true);
+        const nid = makeId();
+        const now = isoNow();
+        const newRow: ChatSession = {
+          id: nid,
+          title: t('defaultChatTitle'),
+          createdAt: now,
+          updatedAt: now,
+          hasUserMessage: false,
+        };
+        const merged = [newRow, ...kept];
+        await persistSessionMeta(merged);
+        await saveMessages(nid, []);
+        await saveActiveSessionId(nid);
+        setActiveSessionId(nid);
+        setInput('');
+        setError(null);
+        setPendingAttachments([]);
+        setChatsOpen(false);
+        setSettingsOpen(false);
+        queueMicrotask(() => {
+          if (shouldAutoFocusComposerInput()) inputRef.current?.focus();
+        });
         return;
       }
       await persistSessionMeta(next);
-      if (wasActive) {
-        const first = next[0]!.id;
-        await saveActiveSessionId(first);
-        setActiveSessionId(first);
-        setInput('');
-        setError(null);
-      }
     })();
   }, [pendingDeleteId, persistSessionMeta, sessions, t]);
 
@@ -1937,26 +1972,62 @@ Model id: ${trimmedModelId}`,
 
   const closeChatsPanel = useCallback(() => {
     setChatsOpen(false);
+    setChatsFilterQuery('');
+    if (chatsSummaryEmbed) {
+      summaryAbortRef.current?.abort();
+      summaryAbortRef.current = null;
+      setChatsSummaryEmbed(false);
+      setSummaryInFlight(false);
+      setSummaryBody('');
+      setSummaryError(null);
+      setSummarySessionLabel('');
+    }
+  }, [chatsSummaryEmbed]);
+
+  const closeChatsPanelSummaryView = useCallback(() => {
+    summaryAbortRef.current?.abort();
+    summaryAbortRef.current = null;
+    setChatsSummaryEmbed(false);
+    setSummaryInFlight(false);
+    setSummaryBody('');
+    setSummaryError(null);
+    setSummarySessionLabel('');
   }, []);
 
   const closeChatSummaryDialog = useCallback(() => {
     summaryAbortRef.current?.abort();
     summaryAbortRef.current = null;
     setSummaryOpen(false);
+    setChatsSummaryEmbed(false);
     setSummaryInFlight(false);
     setSummaryBody('');
     setSummaryError(null);
   }, []);
 
   const openChatSummary = useCallback(
-    (sessionId: string, sessionLabel: string, msgsOverride?: ChatMessage[]) => {
+    (
+      sessionId: string,
+      sessionLabel: string,
+      msgsOverride?: ChatMessage[],
+      opts?: { embedInChatsPanel?: boolean },
+    ) => {
+      const embedInChatsPanel = opts?.embedInChatsPanel === true;
+      const revealSummarySurface = () => {
+        if (embedInChatsPanel) {
+          setChatsSummaryEmbed(true);
+          setSummaryOpen(false);
+        } else {
+          setChatsSummaryEmbed(false);
+          setSummaryOpen(true);
+        }
+      };
       void (async () => {
         const msgs = msgsOverride ?? (await loadMessages(sessionId));
         summaryAbortRef.current?.abort();
         if (systemSelection.kind === 'none' || !systemAiUsable) {
           summaryAbortRef.current = null;
           setSummarySessionLabel(sessionLabel);
-          setSummaryOpen(true);
+          revealSummarySurface();
           setSummaryInFlight(false);
           setSummaryBody('');
           setSummaryError(t('chat.summary.error'));
@@ -1965,7 +2036,7 @@ Model id: ${trimmedModelId}`,
         if (!msgs.some((m) => m.role === 'user')) {
           summaryAbortRef.current = null;
           setSummarySessionLabel(sessionLabel);
-          setSummaryOpen(true);
+          revealSummarySurface();
           setSummaryInFlight(false);
           setSummaryBody('');
           setSummaryError(t('chat.summary.empty'));
@@ -1977,7 +2048,7 @@ Model id: ${trimmedModelId}`,
         if (cached && cached.fp === fp && cached.body.trim()) {
           summaryAbortRef.current = null;
           setSummarySessionLabel(sessionLabel);
-          setSummaryOpen(true);
+          revealSummarySurface();
           setSummaryInFlight(false);
           setSummaryBody(cached.body);
           setSummaryError(null);
@@ -1986,7 +2057,7 @@ Model id: ${trimmedModelId}`,
         const ac = new AbortController();
         summaryAbortRef.current = ac;
         setSummarySessionLabel(sessionLabel);
-        setSummaryOpen(true);
+        revealSummarySurface();
         setSummaryInFlight(true);
         setSummaryBody('');
         setSummaryError(null);
@@ -2101,6 +2172,12 @@ Model id: ${trimmedModelId}`,
     [sessions],
   );
 
+  const filteredChatSessions = useMemo(() => {
+    const q = chatsFilterQuery.trim().toLowerCase();
+    if (!q) return listableSessions;
+    return listableSessions.filter((s) => s.title.toLowerCase().includes(q));
+  }, [listableSessions, chatsFilterQuery]);
+
   const showChatsListButton = useMemo(() => {
     if (listableSessions.length > 1) return true;
     const activeHasUser = messages.some((m) => m.role === 'user');
@@ -2116,6 +2193,12 @@ Model id: ${trimmedModelId}`,
       setChatsOpen(false);
     }
   }, [showChatsListButton, chatsOpen]);
+
+  useEffect(() => {
+    if (!chatsOpen || chatsSummaryEmbed || !shouldAutoFocusComposerInput()) return;
+    const tid = window.setTimeout(() => chatsSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(tid);
+  }, [chatsOpen, chatsSummaryEmbed]);
 
   const onComposerKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -2274,68 +2357,113 @@ Model id: ${trimmedModelId}`,
         </div>
       </aside>
 
-      <DraggableDialog
+      <DraggableWindow
         open={chatsOpen}
-        title={t('chat.dialog.title')}
+        title={chatsSummaryEmbed ? t('chat.summary.title') : t('chat.dialog.title')}
         closeAriaLabel={t('dialog.close')}
+        maximizeAriaLabel={t('settings.window.maximize')}
+        restoreAriaLabel={t('settings.window.restore')}
         mobileBackAriaLabel={t('dialog.back')}
         onClose={closeChatsPanel}
-        width={560}
+        width={520}
+        height={520}
+        minWidth={320}
+        minHeight={360}
+        variant="solid"
       >
-        <div className="chat-dialog">
-          <div className="chat-dialog-actions">
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void openNewChat()}>
-              {t('chat.dialog.newChat')}
-            </button>
-          </div>
-          <div className="chat-dialog-list-wrap">
-            <div className="chat-dialog-list">
-              {listableSessions.length === 0 ? (
-                <div className="chat-dialog-empty">{t('chat.dialog.empty')}</div>
-              ) : (
-                listableSessions.map((s) => (
-                  <div key={s.id} className="chat-dialog-item">
-                    <button
-                      type="button"
-                      className="chat-dialog-open"
-                      onClick={() => {
-                        selectSession(s.id);
-                        closeChatsPanel();
-                      }}
-                    >
-                      <span className="chat-dialog-open-title">{s.title}</span>
-                    </button>
-                    <div className="chat-dialog-row-actions-icons">
-                      <button
-                        type="button"
-                        className="chat-dialog-icon-btn chat-dialog-icon-btn-summary"
-                        disabled={busy || summaryInFlight}
-                        onClick={() => {
-                          closeChatsPanel();
-                          openChatSummary(s.id, s.title);
-                        }}
-                        title={t('chat.summary.view')}
-                        aria-label={t('chat.summary.view')}
-                      >
-                        <IconChatSummary size={17} />
-                      </button>
-                      <button
-                        type="button"
-                        className="chat-dialog-icon-btn chat-dialog-icon-btn-danger"
-                        onClick={() => askDeleteSession(s.id)}
-                        title={t('chat.delete')}
-                        aria-label={t('chat.delete')}
-                      >
-                        <span aria-hidden>×</span>
-                      </button>
-                    </div>
+        <div className="chat-dialog chat-dialog-root--window">
+          {chatsSummaryEmbed ? (
+            <div className="chat-dialog-summary-pane">
+              <div className="chat-dialog-summary-toolbar">
+                <button
+                  type="button"
+                  className="btn btn-ghost chat-dialog-summary-back-btn"
+                  onClick={closeChatsPanelSummaryView}
+                >
+                  {t('chat.dialog.summaryBackToList')}
+                </button>
+              </div>
+              <div className="summary-dialog chat-dialog-summary-body">
+                <p className="summary-dialog-lead">{summarySessionLabel}</p>
+                {summaryError ? <p className="summary-dialog-error">{summaryError}</p> : null}
+                {summaryInFlight && !summaryBody.trim() ? (
+                  <p className="summary-dialog-loading" role="status">
+                    {t('chat.summary.loading')}
+                  </p>
+                ) : null}
+                {summaryBody.trim() ? (
+                  <div className="summary-dialog-scroll markdown-body">
+                    <ChatMarkdown content={summaryBody} theme={theme} t={t} />
                   </div>
-                ))
-              )}
+                ) : null}
+              </div>
             </div>
-          </div>
+          ) : (
+            <>
+              <div className="field chat-dialog-search">
+                <input
+                  ref={chatsSearchInputRef}
+                  id="minerva-chats-search"
+                  type="search"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={chatsFilterQuery}
+                  onChange={(e) => setChatsFilterQuery(e.target.value)}
+                  placeholder={t('chat.dialog.searchPlaceholder')}
+                  aria-label={t('chat.dialog.searchAria')}
+                />
+              </div>
+              <div className="chat-dialog-list-wrap">
+                <div className="chat-dialog-list">
+                  {listableSessions.length === 0 ? (
+                    <div className="chat-dialog-empty">{t('chat.dialog.empty')}</div>
+                  ) : filteredChatSessions.length === 0 ? (
+                    <div className="chat-dialog-empty">{t('chat.dialog.searchNoResults')}</div>
+                  ) : (
+                    filteredChatSessions.map((s) => (
+                      <div key={s.id} className="chat-dialog-item">
+                        <button
+                          type="button"
+                          className="chat-dialog-open"
+                          onClick={() => {
+                            selectSession(s.id);
+                            closeChatsPanel();
+                          }}
+                        >
+                          <span className="chat-dialog-open-title">{s.title}</span>
+                        </button>
+                        <div className="chat-dialog-row-actions-icons">
+                          <button
+                            type="button"
+                            className="chat-dialog-icon-btn chat-dialog-icon-btn-summary"
+                            disabled={busy || summaryInFlight}
+                            onClick={() =>
+                              openChatSummary(s.id, s.title, undefined, { embedInChatsPanel: true })
+                            }
+                            title={t('chat.summary.view')}
+                            aria-label={t('chat.summary.view')}
+                          >
+                            <IconChatSummary size={17} />
+                          </button>
+                          <button
+                            type="button"
+                            className="chat-dialog-icon-btn chat-dialog-icon-btn-danger"
+                            onClick={() => askDeleteSession(s.id)}
+                            title={t('chat.delete')}
+                            aria-label={t('chat.delete')}
+                          >
+                            <span aria-hidden>×</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
-      </DraggableDialog>
+      </DraggableWindow>
 
       <DraggableDialog
         open={summaryOpen}
@@ -2772,7 +2900,7 @@ Model id: ${trimmedModelId}`,
 
       <button
         type="button"
-        className="fab-new-chat"
+        className={`fab-new-chat${chatsOpen ? ' fab-new-chat--hidden' : ''}`}
         onClick={() => void openNewChat()}
         title={t('nav.newChat')}
         aria-label={t('nav.newChat')}

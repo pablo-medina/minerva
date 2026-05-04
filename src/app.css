@@ -159,27 +159,27 @@
   margin-top: 0.75rem;
 }
 
-.openai-lm-polyfill {
+.openai-lm-driver {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
   margin-top: 0.25rem;
 }
 
-.openai-lm-polyfill--gate {
+.openai-lm-driver--gate {
   margin-top: 0.75rem;
   text-align: left;
 }
 
-.openai-lm-polyfill > .hint {
+.openai-lm-driver > .hint {
   margin: 0;
 }
 
-.openai-lm-polyfill .hint.openai-lm-remote-offline-note {
+.openai-lm-driver .hint.openai-lm-remote-offline-note {
   margin-top: 0.35rem;
 }
 
-.openai-lm-polyfill .field {
+.openai-lm-driver .field {
   gap: 0.5rem;
 }
 
@@ -317,6 +317,24 @@
   max-height: min(42vh, 280px);
 }
 
+.settings-ai-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.55rem;
+}
+
+.settings-ai-filter-btn {
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+}
+
+.settings-ai-filter-btn-active {
+  background: color-mix(in oklab, var(--accent) 18%, var(--bg-elevated) 82%);
+  border-color: color-mix(in oklab, var(--accent) 34%, var(--border) 66%);
+  color: var(--accent);
+}
+
 .openai-lm-model-list-status,
 .openai-lm-model-list-empty {
   padding: 0.65rem 0.75rem;
@@ -366,12 +384,90 @@
   white-space: nowrap;
 }
 
+.openai-lm-connection-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.1rem 0 0.2rem;
+}
+
+.openai-lm-test-status {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.openai-lm-test-status--ok {
+  color: color-mix(in oklab, var(--accent) 75%, #9ad46d 25%);
+}
+
+.settings-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.bool-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  flex-shrink: 0;
+}
+
+.bool-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.bool-switch:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 55%, transparent);
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+
+.bool-switch-track {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 13px;
+  transition: background-color 0.18s ease;
+  background: color-mix(in oklab, var(--text-muted) 22%, var(--bg-elevated) 78%);
+}
+
+.bool-switch--on .bool-switch-track {
+  background: color-mix(in oklab, var(--accent) 82%, var(--text) 18%);
+}
+
+.bool-switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: #fff;
+  transition: left 0.2s cubic-bezier(0.34, 1.15, 0.64, 1);
+}
+
+.bool-switch--on .bool-switch-thumb {
+  left: calc(100% - 3px - 20px);
+}
+
 .openai-lm-model-picker-error {
   margin: 0.35rem 0 0;
   font-size: 0.78rem;
 }
 
-.openai-lm-polyfill-actions {
+.openai-lm-driver-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -379,13 +475,13 @@
   margin-top: 0;
 }
 
-.openai-lm-polyfill-actions--gate {
+.openai-lm-driver-actions--gate {
   flex-wrap: nowrap;
   justify-content: flex-start;
 }
 
 @media (max-width: 520px) {
-  .openai-lm-polyfill-actions--gate {
+  .openai-lm-driver-actions--gate {
     flex-wrap: wrap;
   }
 }
@@ -992,7 +1088,13 @@
 }
 
 .msg-user-topbar .msg-role {
-  line-height: 1.2;
+  font-size: 0.95rem;
+  line-height: 1.05;
+  font-weight: 700;
+  font-variant-caps: all-small-caps;
+  font-feature-settings: "smcp" 1, "c2sc" 1;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .msg-user-topbar-leading .msg-time {
@@ -1603,6 +1705,24 @@ html[data-theme='light'] .fab-new-chat {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.composer-mobile-chip-value--ai,
+.composer-model-name--ai {
+  font-variant-caps: all-small-caps;
+  font-feature-settings: "smcp" 1, "c2sc" 1;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.msg-role-ai {
+  font-size: 0.95rem;
+  line-height: 1.05;
+  font-weight: 700;
+  font-variant-caps: all-small-caps;
+  font-feature-settings: "smcp" 1, "c2sc" 1;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 button.composer-model-name--clickable {
@@ -2510,6 +2630,16 @@ html[data-theme='light'] .composer-inner--drop-hover .composer-input-shell {
   color: var(--text);
 }
 
+/* Settings form rhythm: keep each label with its own control, and add
+   consistent breathing room between field blocks. */
+.settings-vscode-pane .field {
+  gap: 0.45rem;
+}
+
+.settings-vscode-pane .field + .field {
+  margin-top: 0.7rem;
+}
+
 /** General settings: clearer vertical rhythm between title, controls, and hints. */
 .settings-general-stack {
   display: flex;
@@ -2521,8 +2651,8 @@ html[data-theme='light'] .composer-inner--drop-hover .composer-input-shell {
   margin: 0;
 }
 
-.settings-general-stack .field {
-  gap: 0.45rem;
+.settings-general-stack .field + .field {
+  margin-top: 0;
 }
 
 .settings-general-stack .field .hint {
@@ -2533,34 +2663,62 @@ html[data-theme='light'] .composer-inner--drop-hover .composer-input-shell {
   margin-bottom: 0;
 }
 
+.settings-ai-configure-row {
+  margin-top: 0.45rem;
+}
+
 @media (max-width: 1024px) {
   .settings-vscode-split {
     flex-direction: column;
     min-height: 0;
-    max-height: min(64vh, 560px);
+    max-height: none;
+    border-radius: 12px;
   }
 
   .settings-vscode-nav {
     width: 100%;
     min-width: 0;
     flex-direction: row;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    padding: 0.45rem 0.5rem;
+    flex-wrap: nowrap;
+    gap: 0.4rem;
+    padding: 0.5rem;
     border-right: none;
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
     overflow-y: visible;
     flex-shrink: 0;
+    scrollbar-width: none;
+  }
+
+  .settings-vscode-nav::-webkit-scrollbar {
+    display: none;
   }
 
   .settings-vscode-nav-btn {
     width: auto;
-    flex: 1 1 auto;
-    min-width: min(140px, 42%);
+    flex: 0 0 auto;
+    min-width: max-content;
     text-align: center;
-    padding: 0.42rem 0.45rem;
-    font-size: 0.78rem;
+    padding: 0.5rem 0.72rem;
+    font-size: 0.8rem;
+    border-radius: 999px;
+  }
+
+  .settings-vscode-pane {
+    padding: 0.78rem 0.82rem 0.9rem;
+  }
+
+  .settings-dialog-root--window .settings-dialog-lead {
+    margin: 0 0 0.3rem;
+    font-size: 0.81rem;
+    line-height: 1.35;
+  }
+
+  .settings-dialog-root--window .settings-dialog-footer {
+    padding-top: 0.55rem;
+    margin-top: 0.2rem;
+    background: color-mix(in oklab, var(--bg-panel) 88%, transparent);
+    backdrop-filter: blur(4px);
   }
 }
 
@@ -2604,6 +2762,66 @@ html[data-theme='light'] .composer-inner--drop-hover .composer-input-shell {
 .btn-ai-refine:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.btn-ai-refine-icon-only {
+  min-width: 32px;
+  width: 32px;
+  padding: 0;
+  gap: 0;
+}
+
+.settings-ai-alias-input {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.settings-ai-alias-input:focus-within {
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 28%, transparent);
+}
+
+.settings-ai-alias-input > input {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding-right: 0.45rem;
+}
+
+.settings-ai-alias-action {
+  flex-shrink: 0;
+  width: 38px;
+  border: none;
+  border-left: 1px solid color-mix(in oklab, var(--border) 78%, transparent);
+  background: color-mix(in oklab, var(--accent) 14%, var(--bg-elevated));
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.settings-ai-alias-action:hover {
+  background: color-mix(in oklab, var(--accent) 20%, var(--bg-elevated));
+}
+
+.settings-ai-alias-action:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.settings-ai-alias-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .settings-dialog-error {
@@ -2864,6 +3082,174 @@ html[data-theme='light'] .minerva-banner-info {
   flex-direction: column;
   overflow: hidden;
   max-height: min(78vh, 640px);
+}
+
+.drag-window-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--modal-backdrop);
+  backdrop-filter: blur(3px);
+  z-index: 10000;
+  animation: fadeIn 180ms ease-out;
+}
+
+.drag-window {
+  position: fixed;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in oklab, var(--bg-panel) 90%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  z-index: 10001;
+  max-width: calc(100vw - 1.5rem);
+  max-height: calc(100dvh - 1.5rem);
+  display: flex;
+  flex-direction: column;
+  animation: dialogIn 220ms ease-out;
+}
+
+.drag-window-solid {
+  background: var(--bg-panel);
+  backdrop-filter: none;
+}
+
+.drag-window-maximized {
+  border-radius: 11px;
+}
+
+.drag-window-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.5rem 0.55rem 0.75rem;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 45%, transparent);
+  cursor: move;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.drag-window-title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drag-window-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  flex-shrink: 0;
+}
+
+.drag-window-control {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.drag-window-control:hover {
+  color: var(--text);
+  background: color-mix(in oklab, var(--fg) 10%, transparent);
+}
+
+.drag-window-control-close:hover {
+  color: var(--text);
+  background: color-mix(in oklab, var(--danger) 20%, transparent);
+}
+
+.drag-window-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.85rem 0.9rem 0.95rem;
+}
+
+.drag-window-resize-handle {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  cursor: nwse-resize;
+  border-bottom: 2px solid color-mix(in oklab, var(--text-muted) 70%, transparent);
+  border-right: 2px solid color-mix(in oklab, var(--text-muted) 70%, transparent);
+  border-bottom-right-radius: 3px;
+}
+
+.drag-window-backdrop-mobile {
+  backdrop-filter: blur(5px);
+}
+
+.drag-window-mobile-sheet.drag-window {
+  inset: 0;
+  left: 0 !important;
+  top: 0 !important;
+  width: 100% !important;
+  height: 100dvh !important;
+  max-width: none !important;
+  max-height: 100dvh !important;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  animation: dragDialogMobileIn 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.drag-window-header-mobile {
+  cursor: default;
+  padding-top: max(0.55rem, env(safe-area-inset-top));
+  padding-left: max(0.25rem, env(safe-area-inset-left));
+  padding-right: max(0.5rem, env(safe-area-inset-right));
+  min-height: calc(44px + env(safe-area-inset-top));
+}
+
+.drag-window-mobile-back {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -0.2rem 0.1rem -0.2rem -0.15rem;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.drag-window-mobile-sheet .drag-window-body {
+  padding: 0.7rem 0.65rem max(0.9rem, env(safe-area-inset-bottom));
+}
+
+.drag-window-body:has(.settings-dialog-root--window) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-dialog-root--window {
+  height: 100%;
+}
+
+.settings-dialog-root--window .settings-vscode-split {
+  min-height: 0;
 }
 
 .message-dialog-backdrop {

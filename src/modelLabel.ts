@@ -1,9 +1,4 @@
 import type { Translator } from './i18n';
-import { isOpenAiLanguageModelPolyfillInstalled } from './polyfills/openaiLanguageModel/detect';
-import {
-  isOpenAiLmPolyfillConfigComplete,
-  loadOpenAiLmPolyfillConfig,
-} from './polyfills/openaiLanguageModel/storage';
 import { languageModelSupported } from './promptApi';
 
 function readOptionalModelName(session: LanguageModel | null): string | null {
@@ -31,25 +26,8 @@ function formatModelName(raw: string, t: Translator): string {
     .join(' ');
 }
 
-/**
- * Label for bubbles and composer: with the OpenAI polyfill and a complete saved config,
- * uses optional `displayAlias`, otherwise the localized default “External AI”, so the UI
- * tracks settings without waiting for a new `LanguageModel` instance. Otherwise reads
- * from the active session, then on-device / fallback strings.
- */
+/** Label for bubbles/composer from session name or fallback branding. */
 export function modelLabelForSession(session: LanguageModel | null, t: Translator): string {
-  if (isOpenAiLanguageModelPolyfillInstalled()) {
-    const cfg = loadOpenAiLmPolyfillConfig();
-    const alias = cfg?.displayAlias?.trim();
-    if (alias) return alias;
-    if (cfg && isOpenAiLmPolyfillConfigComplete(cfg)) {
-      return t('model.externalAiDefault');
-    }
-    const fromApi = readOptionalModelName(session);
-    if (fromApi) return formatModelName(fromApi, t);
-    return t('model.apiEmulationPending');
-  }
-
   const fromApi = readOptionalModelName(session);
   if (fromApi) return formatModelName(fromApi, t);
 

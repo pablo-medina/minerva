@@ -11,6 +11,11 @@ import {
   type ChatThreadRecord,
   type PersistedChatMessage,
 } from './db';
+import {
+  clampOpenAiTemperature,
+  normalizeOpenAiBaseUrl,
+  type OpenAiDriverStored,
+} from './drivers/openaiLanguageModel/storage';
 import { getOriginStorageQuotaMib } from './storageEstimate';
 
 export function parseNanoTurnStats(raw: unknown): import('./types').NanoTurnStats | undefined {
@@ -53,6 +58,12 @@ export const DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES = 8;
 export const DEFAULT_STREAM_FIRST_CHUNK_TIMEOUT_SEC = 15;
 
 const defaultSettings = (): LocalSettings => ({
+  chatAiModelKey: undefined,
+  systemAiModelKey: undefined,
+  chatAiId: undefined,
+  systemAiId: undefined,
+  openAiConfig: undefined,
+  autoAliasExternalModel: true,
   systemPrompt: '',
   preferredName: '',
   chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
@@ -60,6 +71,28 @@ const defaultSettings = (): LocalSettings => ({
   maxImageAttachmentMib: DEFAULT_MAX_IMAGE_ATTACHMENT_MIB,
   streamFirstChunkTimeoutSec: DEFAULT_STREAM_FIRST_CHUNK_TIMEOUT_SEC,
 });
+
+function normalizeAiId(raw: unknown): LocalSettings['chatAiId'] | undefined {
+  return raw === 'nano' || raw === 'openai' ? raw : undefined;
+}
+
+function normalizeOpenAiConfig(raw: unknown): OpenAiDriverStored | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const baseUrl = normalizeOpenAiBaseUrl(typeof o.baseUrl === 'string' ? o.baseUrl : '');
+  const modelId = typeof o.modelId === 'string' ? o.modelId.trim() : '';
+  if (!baseUrl || !modelId) return undefined;
+  const apiKey = typeof o.apiKey === 'string' ? o.apiKey : '';
+  const displayAliasRaw = typeof o.displayAlias === 'string' ? o.displayAlias.trim() : '';
+  return {
+    baseUrl,
+    modelId,
+    apiKey,
+    temperature: clampOpenAiTemperature(o.temperature),
+    ...(o.supportsVision === true ? { supportsVision: true } : {}),
+    ...(displayAliasRaw ? { displayAlias: displayAliasRaw } : {}),
+  };
+}
 
 /** Normalizes stored or user-entered seconds (0 = disabled; otherwise clamped 1–600). */
 export function clampStreamFirstChunkTimeoutSec(raw: unknown): number {
@@ -95,6 +128,21 @@ export function normalizeAppSettingsRow(row: AppSettingsRow | null | undefined):
   return {
     key: 'app',
     localSettings: {
+      chatAiModelKey:
+        typeof row.localSettings?.chatAiModelKey === 'string'
+          ? row.localSettings.chatAiModelKey.trim() || undefined
+          : undefined,
+      systemAiModelKey:
+        typeof row.localSettings?.systemAiModelKey === 'string'
+          ? row.localSettings.systemAiModelKey.trim() || undefined
+          : undefined,
+      chatAiId: normalizeAiId(row.localSettings?.chatAiId),
+      systemAiId: normalizeAiId(row.localSettings?.systemAiId),
+      openAiConfig: normalizeOpenAiConfig(row.localSettings?.openAiConfig),
+      autoAliasExternalModel:
+        typeof row.localSettings?.autoAliasExternalModel === 'boolean'
+          ? row.localSettings.autoAliasExternalModel
+          : true,
       systemPrompt:
         typeof row.localSettings?.systemPrompt === 'string' ? row.localSettings.systemPrompt : '',
       preferredName:
@@ -179,6 +227,10 @@ async function serializeMessage(m: ChatMessage): Promise<PersistedChatMessage> {
     content: m.content,
     createdAt: m.createdAt,
     ...(m.nanoTurnStats ? { nanoTurnStats: m.nanoTurnStats } : {}),
+    ...(typeof m.reasoning === 'string' && m.reasoning.trim() ? { reasoning: m.reasoning } : {}),
+    ...(m.role === 'assistant' && typeof m.assistantDisplayName === 'string' && m.assistantDisplayName.trim()
+      ? { assistantDisplayName: m.assistantDisplayName.trim() }
+      : {}),
   };
   if (!m.attachments?.length) return base;
   const attachments = await Promise.all(
@@ -238,6 +290,12 @@ async function deserializeMessage(pm: PersistedChatMessage): Promise<ChatMessage
     if (parsed.length) attachments = parsed;
   }
   const nanoTurnStats = pm.role === 'assistant' ? parseNanoTurnStats(pm.nanoTurnStats) : undefined;
+  const reasoning =
+    pm.role === 'assistant' && typeof (pm as unknown as Record<string, unknown>).reasoning === 'string'
+      ? ((pm as unknown as Record<string, unknown>).reasoning as string)
+      : undefined;
+  const assistantDisplayNameRaw =
+    pm.role === 'assistant' && typeof pm.assistantDisplayName === 'string' ? pm.assistantDisplayName.trim() : '';
   return {
     id: pm.id,
     role: pm.role,
@@ -245,6 +303,8 @@ async function deserializeMessage(pm: PersistedChatMessage): Promise<ChatMessage
     createdAt: typeof pm.createdAt === 'string' ? pm.createdAt : new Date().toISOString(),
     ...(attachments ? { attachments } : {}),
     ...(nanoTurnStats ? { nanoTurnStats } : {}),
+    ...(reasoning ? { reasoning } : {}),
+    ...(assistantDisplayNameRaw ? { assistantDisplayName: assistantDisplayNameRaw } : {}),
   };
 }
 

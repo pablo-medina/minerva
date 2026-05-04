@@ -19,6 +19,8 @@ export type PersistedChatMessage = {
   createdAt: string;
   attachments?: PersistedAttachment[];
   nanoTurnStats?: NanoTurnStats;
+  reasoning?: string;
+  assistantDisplayName?: string;
 };
 
 export type ChatThreadRecord = {

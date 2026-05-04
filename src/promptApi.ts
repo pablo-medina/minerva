@@ -4,10 +4,7 @@ export const LM_CORE: Pick<LanguageModelCreateCoreOptions, 'expectedInputs' | 'e
   expectedOutputs: [{ type: 'text', languages: ['en', 'es'] }],
 };
 
-import { isOpenAiLanguageModelPolyfillInstalled } from './polyfills/openaiLanguageModel/detect';
-import { isOpenAiLmPolyfillConfigComplete, loadOpenAiLmPolyfillConfig } from './polyfills/openaiLanguageModel/storage';
-
-/** Multimodal chat: text + image in user turns (requires the multimodal Chrome flag). */
+/** Multimodal chat: text + image in user turns (Prompt API image input availability varies by Chrome version/channel). */
 export const LM_CORE_MULTIMODAL: Pick<
   LanguageModelCreateCoreOptions,
   'expectedInputs' | 'expectedOutputs'
@@ -25,9 +22,6 @@ export function lmCoreForThreadUsesImages(usesImages: boolean): typeof LM_CORE {
 
 export async function languageModelImageInputSupported(): Promise<boolean> {
   if (!languageModelSupported()) return false;
-  if (isOpenAiLanguageModelPolyfillInstalled()) {
-    return isOpenAiLmPolyfillConfigComplete(loadOpenAiLmPolyfillConfig());
-  }
   try {
     const a = await LanguageModel.availability(LM_CORE_MULTIMODAL);
     return a !== 'unavailable';

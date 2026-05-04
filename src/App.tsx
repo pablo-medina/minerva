@@ -10,11 +10,8 @@ import {
   type KeyboardEvent,
 } from 'react';
 import { createTranslator, detectBrowserLang } from './i18n';
-import { modelLabelForSession } from './modelLabel';
 import {
   LM_CORE,
-  isChromiumBrowser,
-  languageModelEntryOk,
   languageModelImageInputSupported,
   languageModelSupported,
   lmCoreForThreadUsesImages,
@@ -39,8 +36,9 @@ import {
   saveSettings,
   wipeAllChatThreads,
 } from './storage';
-import { fingerprintForChatSummaryCache, summarizeChatMessages } from './chatSummary';
-import { generateChatTitleWithOnDeviceModel, shouldRefreshChatTitle } from './chatTitleAi';
+import { fingerprintForChatSummaryCache } from './chatSummary';
+import { shouldRefreshChatTitle } from './chatTitleAi';
+import { generateChatTitleWithSystemAi, summarizeWithSystemAi } from './systemAiTasks';
 import {
   buildSessionInitialPromptsAsync,
   defaultSessionSystemContext,
@@ -99,21 +97,182 @@ import { StoragePressureBanner } from './components/StoragePressureBanner';
 import { StorageQuotaPieChart } from './components/StorageQuotaPieChart';
 import { ChatMarkdown } from './components/ChatMarkdown';
 import { DraggableDialog } from './components/DraggableDialog';
+import { DraggableWindow } from './components/DraggableWindow';
 import { MessageDialog } from './components/MessageDialog';
 import { MessageTimestamp } from './components/MessageTimestamp';
 import { EditUserMessageDialog } from './components/EditUserMessageDialog';
+import { BoolSwitch } from './components/BoolSwitch';
 import {
   buildUserMessageDisplayContent,
   modelPromptTextFromUserMessage,
   userMessageEditableText,
 } from './chatUserMessageDisplay';
-import { isOpenAiLanguageModelPolyfillInstalled } from './polyfills/openaiLanguageModel/detect';
-import { OpenAiLmPolyfillSettingsForm } from './polyfills/openaiLanguageModel/OpenAiLmPolyfillSettingsForm';
-import {
-  clearOpenAiLmPolyfillConfig,
-  isOpenAiLmPolyfillConfigComplete,
-  loadOpenAiLmPolyfillConfig,
-} from './polyfills/openaiLanguageModel/storage';
+import { OpenAiDriverSettingsForm } from './drivers/openaiLanguageModel/OpenAiDriverSettingsForm';
+import { fetchOpenAiLmModelIds } from './drivers/openaiLanguageModel/openAiHttp';
+import { createDriverSession, type AiDriverId } from './aiDrivers';
+
+type ResolvedAiSelection =
+  | { kind: 'none' }
+  | { kind: 'nano' }
+  | { kind: 'openai'; modelId: string };
+
+const AUTO_ALIAS_MAX_CHARS = 16;
+
+function parseAiModelKey(raw: string | undefined): ResolvedAiSelection {
+  const s = (raw ?? '').trim();
+  if (!s) return { kind: 'none' };
+  if (s === 'nano') return { kind: 'nano' };
+  if (s.startsWith('openai:')) {
+    const modelId = s.slice('openai:'.length).trim();
+    return modelId ? { kind: 'openai', modelId } : { kind: 'none' };
+  }
+  return { kind: 'none' };
+}
+
+function resolveSelection(settings: LocalSettings, target: 'chat' | 'system'): ResolvedAiSelection {
+  const key = target === 'chat' ? settings.chatAiModelKey : settings.systemAiModelKey;
+  const parsed = parseAiModelKey(key);
+  if (parsed.kind !== 'none') return parsed;
+  const legacy = target === 'chat' ? settings.chatAiId : settings.systemAiId;
+  if (legacy === 'nano') return { kind: 'nano' };
+  if (legacy === 'openai') {
+    const modelId = settings.openAiConfig?.modelId?.trim();
+    if (modelId) return { kind: 'openai', modelId };
+  }
+  return { kind: 'none' };
+}
+
+function selectionToModelKey(sel: ResolvedAiSelection): string | undefined {
+  if (sel.kind === 'nano') return 'nano';
+  if (sel.kind === 'openai') return `openai:${sel.modelId}`;
+  return undefined;
+}
+
+function withSelection(settings: LocalSettings, target: 'chat' | 'system', sel: ResolvedAiSelection): LocalSettings {
+  const key = selectionToModelKey(sel);
+  if (target === 'chat') {
+    return {
+      ...settings,
+      chatAiModelKey: key,
+      chatAiId: sel.kind === 'none' ? undefined : (sel.kind as AiDriverId),
+    };
+  }
+  return {
+    ...settings,
+    systemAiModelKey: key,
+    systemAiId: sel.kind === 'none' ? undefined : (sel.kind as AiDriverId),
+  };
+}
+
+/** Composer + bubble heading: prefers external display alias alone when set. */
+function chatAiComposerDisplayLabel(
+  sel: ResolvedAiSelection,
+  settings: LocalSettings,
+  t: ReturnType<typeof createTranslator>,
+): string {
+  if (sel.kind === 'none') return t('settings.ai.none');
+  if (sel.kind === 'nano') return t('model.geminiNanoBrand');
+  const alias = settings.openAiConfig?.displayAlias?.trim();
+  if (alias) return alias;
+  return sel.modelId;
+}
+
+function aiSelectionSettingsLabel(sel: ResolvedAiSelection, t: ReturnType<typeof createTranslator>): string {
+  if (sel.kind === 'none') return t('settings.ai.none');
+  if (sel.kind === 'nano') return t('model.geminiNanoBrand');
+  return sel.modelId;
+}
+
+function truncateComposerAiName(label: string, maxChars = 30): string {
+  const trimmed = label.trim();
+  if (trimmed.length <= maxChars) return trimmed;
+  return `${trimmed.slice(0, Math.max(1, maxChars - 1)).trimEnd()}...`;
+}
+
+function normalizeAliasLine(s: string): string {
+  return s.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').slice(0, AUTO_ALIAS_MAX_CHARS).trim();
+}
+
+/** Each alias token must appear verbatim in modelId (handles "DeepSeek R1" → deepseek + r1). */
+function aliasLooksGroundedInModelId(alias: string, modelId: string): boolean {
+  const m = modelId.toLowerCase();
+  const tokens = alias
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  if (!tokens.length) return false;
+  for (const tok of tokens) {
+    if (tok.length >= 2 || /^\d+$/.test(tok)) {
+      if (!m.includes(tok)) return false;
+    } else if (/[a-z]/.test(tok)) {
+      if (!m.includes(tok)) return false;
+    }
+  }
+  return true;
+}
+
+/** Models often answer with a preamble; parse the full response, not only the first line. */
+function parseAliasFromModelResponse(raw: string): string {
+  const text = raw.trim();
+  if (!text) return '';
+  const matches = [...text.matchAll(/\bALIAS:\s*([^\n\r]+)/gi)];
+  if (matches.length) {
+    const last = matches[matches.length - 1]![1]?.trim() ?? '';
+    if (last) return normalizeAliasLine(last);
+  }
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (/^ALIAS:\s*/i.test(t)) {
+      return normalizeAliasLine(t.replace(/^ALIAS:\s*/i, ''));
+    }
+  }
+  return '';
+}
+
+function aliasCandidatesFromModelId(modelId: string): string[] {
+  const parts = modelId
+    .trim()
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  const alpha = parts.filter((p) => /[a-z]/.test(p));
+  const num = parts.find((p) => /^\d+$/.test(p) || /^[rv]\d+$/i.test(p)) ?? '';
+  const title = (s: string): string => (s ? `${s[0]!.toUpperCase()}${s.slice(1)}` : s);
+
+  const baseA = alpha[0] ? title(alpha[0]) : '';
+  const baseB = alpha[1] ? title(alpha[1]) : '';
+  const candidates = [
+    [baseA, num.toUpperCase()].filter(Boolean).join(' '),
+    [baseA, baseB].filter(Boolean).join(' '),
+    baseA,
+    [baseB, num.toUpperCase()].filter(Boolean).join(' '),
+    baseB,
+  ]
+    .map((s) => s.trim().slice(0, AUTO_ALIAS_MAX_CHARS))
+    .filter(Boolean);
+  return Array.from(new Set(candidates));
+}
+
+/** Prefer the Chat AI external selection; `openAiConfig.modelId` can be stale vs `chatAiModelKey`. */
+function resolveExternalAliasTargetModelId(settings: LocalSettings): string {
+  const chatSel = resolveSelection(settings, 'chat');
+  return chatSel.kind === 'openai'
+    ? chatSel.modelId.trim()
+    : (settings.openAiConfig?.modelId?.trim() ?? '');
+}
+
+function isPlaceholderExternalModelId(id: string): boolean {
+  return id.trim().toLowerCase() === 'x';
+}
+
+function isAcceptableAiGeneratedAlias(alias: string, modelId: string): boolean {
+  const t = alias.trim();
+  if (!t || t.length < 3 || /^ai$/i.test(t)) return false;
+  if (!/[a-z]/i.test(t)) return false;
+  if (!aliasLooksGroundedInModelId(t, modelId)) return false;
+  const toks = t.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return toks.some((tok) => tok.length >= 3 || /^\d{2,}$/.test(tok) || /^r\d+$/i.test(tok) || /^v\d+$/i.test(tok));
+}
 
 function makeId(): string {
   try {
@@ -176,6 +335,33 @@ async function consumeTextStream(
   }
 }
 
+/**
+ * One-shot completion: uses `prompt()` when the session implements it (collects streamed text internally).
+ * Does not change how `promptStreaming` works for chat.
+ */
+async function runLanguageModelPlainText(
+  session: LanguageModel,
+  input: Parameters<LanguageModel['promptStreaming']>[0],
+  signal: AbortSignal,
+): Promise<string> {
+  type LMExtras = LanguageModel & {
+    prompt?: (
+      p: Parameters<LanguageModel['promptStreaming']>[0],
+      opts?: LanguageModelPromptOptions,
+    ) => Promise<string>;
+  };
+  const s = session as LMExtras;
+  if (typeof s.prompt === 'function') {
+    return s.prompt(input, { signal });
+  }
+  const stream = session.promptStreaming(input, { signal });
+  let out = '';
+  await consumeTextStream(stream, (d) => {
+    out += d;
+  }, signal);
+  return out;
+}
+
 function IconPaperclip({ size = 18 }: { size?: number }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
@@ -186,18 +372,6 @@ function IconPaperclip({ size = 18 }: { size?: number }) {
         strokeLinecap="round"
         strokeLinejoin="round"
         d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
-      />
-    </svg>
-  );
-}
-
-/** Material-style “arrow back” (filled), common on Android toolbars. */
-function IconArrowBackAndroid({ size = 22 }: { size?: number }) {
-  return (
-    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"
       />
     </svg>
   );
@@ -281,33 +455,11 @@ function IconExportChat({ size = 17 }: { size?: number }) {
   );
 }
 
-type Gate = 'loading' | 'unsupported' | 'blocked' | 'ready';
-
 export function App() {
-  const [gate, setGate] = useState<Gate>('loading');
   const [lang, setLang] = useState<AppLang>(() => detectBrowserLang());
   const [theme, setTheme] = useState<ThemeMode>('dark');
-  const [howToOpen, setHowToOpen] = useState(false);
-  /** Remote fallback gate: intro first, then advanced URL/model panel. */
-  const [showRemoteLmConfig, setShowRemoteLmConfig] = useState(false);
 
   const t = useMemo(() => createTranslator(lang), [lang]);
-
-  const recheckGate = useCallback(() => {
-    if (!languageModelSupported()) {
-      setGate('unsupported');
-      return;
-    }
-    setGate('loading');
-    void (async () => {
-      const ok = await languageModelEntryOk();
-      setGate(ok ? 'ready' : 'blocked');
-    })();
-  }, []);
-
-  useEffect(() => {
-    recheckGate();
-  }, [recheckGate]);
 
   useEffect(() => {
     void loadAppPrefs().then((p) => {
@@ -324,154 +476,6 @@ export function App() {
   useEffect(() => {
     void saveAppPrefsLang(lang);
   }, [lang]);
-
-  useEffect(() => {
-    if (gate === 'loading') {
-      setShowRemoteLmConfig(false);
-    }
-  }, [gate]);
-
-  const howToChromeFlagsDialog = (
-    <DraggableDialog
-      open={howToOpen}
-      title={t('howToEnableTitle')}
-      closeAriaLabel={t('dialog.close')}
-      mobileBackAriaLabel={t('dialog.back')}
-      onClose={() => setHowToOpen(false)}
-      width={520}
-      variant="solid"
-    >
-      <div className="api-keys-doc-dialog">
-        <ChatMarkdown content={t('howToEnableMarkdown')} theme={theme} t={t} />
-      </div>
-    </DraggableDialog>
-  );
-
-  if (gate === 'loading') {
-    return (
-      <div className="auth-screen">
-        <p className="hint">{t('gate.loading')}</p>
-      </div>
-    );
-  }
-
-  if (gate === 'unsupported') {
-    const showChromeFlagsHowTo = isChromiumBrowser();
-    return (
-      <>
-        <div className="auth-screen">
-          <div className="auth-card">
-            <h1>{t('brand.name')}</h1>
-            <p>{t('gate.unsupported')}</p>
-            <p className="hint">{t('gate.unsupportedHint')}</p>
-            {showChromeFlagsHowTo ? (
-              <>
-                <p className="hint gate-chrome-flags-hint">{t('gate.chromeMaybeFlagsHint')}</p>
-                <div className="minerva-how-to-wrap">
-                  <button
-                    type="button"
-                    className="minerva-how-to-link minerva-how-to-link--prominent"
-                    onClick={() => setHowToOpen(true)}
-                  >
-                    {t('howToEnableLink')}
-                  </button>
-                </div>
-                <div className="auth-card-retry-wrap">
-                  <button type="button" className="btn btn-primary" onClick={recheckGate}>
-                    {t('gate.retry')}
-                  </button>
-                </div>
-              </>
-            ) : null}
-          </div>
-        </div>
-        {showChromeFlagsHowTo ? howToChromeFlagsDialog : null}
-      </>
-    );
-  }
-
-  if (gate === 'blocked') {
-    const remoteLmSetup =
-      isOpenAiLanguageModelPolyfillInstalled() &&
-      !isOpenAiLmPolyfillConfigComplete(loadOpenAiLmPolyfillConfig());
-    return (
-      <>
-        <div className="auth-screen">
-          <div className="auth-screen-stack">
-            <div className="auth-card">
-              {remoteLmSetup && showRemoteLmConfig ? (
-                <div className="auth-card-title-row auth-card-title-row--with-back">
-                  <button
-                    type="button"
-                    className="auth-remote-lm-back-btn"
-                    onClick={() => setShowRemoteLmConfig(false)}
-                    title={t('gate.remoteLmBack')}
-                    aria-label={t('gate.remoteLmBack')}
-                  >
-                    <IconArrowBackAndroid size={22} />
-                  </button>
-                  <h1>{t('brand.name')}</h1>
-                </div>
-              ) : (
-                <h1>{t('brand.name')}</h1>
-              )}
-              {remoteLmSetup ? (
-                showRemoteLmConfig ? (
-                  <OpenAiLmPolyfillSettingsForm
-                    t={t}
-                    variant="gate"
-                    onSaved={recheckGate}
-                    onGateRecheck={recheckGate}
-                  />
-                ) : (
-                  <>
-                    <p className="hint">{t('gate.remoteLmIntroBrief')}</p>
-                    <div className="auth-remote-lm-intro-actions">
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={() => setShowRemoteLmConfig(true)}
-                      >
-                        {t('gate.remoteLmAdvanced')}
-                      </button>
-                      <button type="button" className="btn btn-outline" onClick={recheckGate}>
-                        {t('gate.retry')}
-                      </button>
-                    </div>
-                  </>
-                )
-              ) : (
-                <>
-                  <p>{t('gate.blocked')}</p>
-                  <p className="hint">{t('gate.blockedHint')}</p>
-                  <div className="minerva-how-to-wrap">
-                    <button
-                      type="button"
-                      className="minerva-how-to-link minerva-how-to-link--prominent"
-                      onClick={() => setHowToOpen(true)}
-                    >
-                      {t('howToEnableLink')}
-                    </button>
-                  </div>
-                  <div className="auth-card-retry-wrap">
-                    <button type="button" className="btn btn-primary" onClick={recheckGate}>
-                      {t('gate.retry')}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-            {remoteLmSetup ? (
-              <footer className="auth-remote-fallback-footer">
-                <p className="hint auth-remote-fallback-legal">{t('gate.remoteLmLegalFooter')}</p>
-              </footer>
-            ) : null}
-          </div>
-        </div>
-        {remoteLmSetup ? null : howToChromeFlagsDialog}
-      </>
-    );
-  }
 
   return (
     <MinervaChatApp
@@ -549,6 +553,12 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [error, setError] = useState<string | null>(null);
   const [downloadPct, setDownloadPct] = useState<number | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<LocalSettings>({
+    chatAiModelKey: undefined,
+    systemAiModelKey: undefined,
+    chatAiId: undefined,
+    systemAiId: undefined,
+    openAiConfig: undefined,
+    autoAliasExternalModel: true,
     systemPrompt: '',
     preferredName: '',
     chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
@@ -561,7 +571,13 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [mibText, setMibText] = useState(() => formatMibForField(DEFAULT_MAX_TEXT_ATTACHMENT_MIB));
   const [imageMibText, setImageMibText] = useState(() => formatImageMibForField(DEFAULT_MAX_IMAGE_ATTACHMENT_MIB));
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
-  const [modelUiName, setModelUiName] = useState(() => modelLabelForSession(null, t));
+  const [aliasAutoBusy, setAliasAutoBusy] = useState(false);
+  const [aliasAutoStatus, setAliasAutoStatus] = useState<'idle' | 'ok' | 'error'>('idle');
+  const [aliasAutoStatusText, setAliasAutoStatusText] = useState<string | null>(null);
+  const [modelUiName, setModelUiName] = useState(() =>
+    chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t),
+  );
+  const modelUiNameForPrompt = useMemo(() => truncateComposerAiName(modelUiName), [modelUiName]);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [confirmClearChatsOpen, setConfirmClearChatsOpen] = useState(false);
@@ -596,18 +612,246 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   >(null);
   const [confirmDeleteUserMessageOpen, setConfirmDeleteUserMessageOpen] = useState(false);
   const [pendingDeleteUserMessageIdx, setPendingDeleteUserMessageIdx] = useState<number | null>(null);
+  const [externalConfigOpen, setExternalConfigOpen] = useState(false);
+  const [aiPickerTarget, setAiPickerTarget] = useState<'chat' | 'system' | null>(null);
+  const [externalModels, setExternalModels] = useState<string[]>([]);
+  const [externalModelsBusy, setExternalModelsBusy] = useState(false);
+  const [externalModelsError, setExternalModelsError] = useState<string | null>(null);
+  const [aiPickerSearch, setAiPickerSearch] = useState('');
+  const [aiPickerFilter, setAiPickerFilter] = useState<'all' | 'nano' | 'external' | 'available'>('all');
+  const aiPickerSearchInputRef = useRef<HTMLInputElement>(null);
 
   const nanoLmRuntimeOk = useMemo(() => languageModelSupported(), []);
+  const chatSelection = useMemo(() => resolveSelection(settingsDraft, 'chat'), [settingsDraft]);
+  const systemSelection = useMemo(() => resolveSelection(settingsDraft, 'system'), [settingsDraft]);
+  const systemSelectionModelId = systemSelection.kind === 'openai' ? systemSelection.modelId : '';
+  const chatAiUsable = useMemo(() => {
+    if (chatSelection.kind === 'none') return false;
+    if (chatSelection.kind === 'nano') return nanoLmRuntimeOk;
+    return Boolean(settingsDraft.openAiConfig?.baseUrl?.trim() && chatSelection.modelId.trim());
+  }, [chatSelection, nanoLmRuntimeOk, settingsDraft.openAiConfig?.baseUrl]);
+  const systemAiUsable = useMemo(() => {
+    if (systemSelection.kind === 'none') return false;
+    if (systemSelection.kind === 'nano') return nanoLmRuntimeOk;
+    return Boolean(settingsDraft.openAiConfig?.baseUrl?.trim() && systemSelection.modelId.trim());
+  }, [systemSelection, nanoLmRuntimeOk, settingsDraft.openAiConfig?.baseUrl]);
+  const unifiedAiOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Array<{ key: string; label: string; available: boolean }> = [];
+    if (nanoLmRuntimeOk) {
+      out.push({ key: 'nano', label: t('model.geminiNanoBrand'), available: true });
+      seen.add('nano');
+    }
+    const addExternal = (modelId: string) => {
+      const id = modelId.trim();
+      if (id === 'x') return;
+      if (!id) return;
+      const key = `openai:${id}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ key, label: id, available: Boolean(settingsDraft.openAiConfig?.baseUrl?.trim()) });
+    };
+    addExternal(settingsDraft.openAiConfig?.modelId ?? '');
+    for (const m of externalModels) addExternal(m);
+    return out;
+  }, [externalModels, nanoLmRuntimeOk, settingsDraft.openAiConfig?.baseUrl, settingsDraft.openAiConfig?.modelId, t]);
+  const filteredAiOptions = useMemo(() => {
+    const q = aiPickerSearch.trim().toLowerCase();
+    return unifiedAiOptions.filter((o) => {
+      const sel = parseAiModelKey(o.key);
+      if (aiPickerFilter === 'nano' && sel.kind !== 'nano') return false;
+      if (aiPickerFilter === 'external' && sel.kind !== 'openai') return false;
+      if (aiPickerFilter === 'available' && !o.available) return false;
+      if (!q) return true;
+      return o.label.toLowerCase().includes(q);
+    });
+  }, [aiPickerFilter, aiPickerSearch, unifiedAiOptions]);
 
   const openRemoteLanguageModelSettings = useCallback(() => {
     setChatsOpen(false);
-    if (isOpenAiLanguageModelPolyfillInstalled()) {
-      setSettingsSection('remoteModel');
-    } else {
-      setSettingsSection('general');
-    }
+    setSettingsSection('remoteModel');
     setSettingsOpen(true);
   }, []);
+
+  const refreshExternalModels = useCallback(async () => {
+    const cfg = settingsDraft.openAiConfig;
+    if (!cfg?.baseUrl?.trim()) {
+      setExternalModels([]);
+      setExternalModelsError(t('settings.remoteLm.errorNeedBaseUrl'));
+      return;
+    }
+    setExternalModelsBusy(true);
+    setExternalModelsError(null);
+    try {
+      const ids = await fetchOpenAiLmModelIds(cfg);
+      setExternalModels(ids);
+    } catch (e) {
+      setExternalModelsError(
+        t('settings.remoteLm.modelsError').replace('{message}', e instanceof Error ? e.message : String(e)),
+      );
+    } finally {
+      setExternalModelsBusy(false);
+    }
+  }, [settingsDraft.openAiConfig, t]);
+
+  const autoGenerateExternalAlias = useCallback(
+    async (nextSettings: LocalSettings, opts?: { force?: boolean; feedback?: boolean }) => {
+      const force = opts?.force === true;
+      const withFeedback = opts?.feedback === true;
+      if (!force && !nextSettings.autoAliasExternalModel) return;
+      const trimmedModelId = resolveExternalAliasTargetModelId(nextSettings);
+      if (!trimmedModelId || isPlaceholderExternalModelId(trimmedModelId)) {
+        if (withFeedback) {
+          setAliasAutoBusy(true);
+          setAliasAutoStatus('error');
+          setAliasAutoStatusText(t('settings.ai.aliasGenerateBadChatModel'));
+          setAliasAutoBusy(false);
+        }
+        return;
+      }
+      if (withFeedback) {
+        setAliasAutoBusy(true);
+        setAliasAutoStatus('idle');
+        setAliasAutoStatusText(t('settings.ai.aliasGenerating'));
+      }
+      const applyAlias = (alias: string) => {
+        if (!alias) return;
+        setSettingsDraft((prev) => {
+          const chatSel = resolveSelection(prev, 'chat');
+          const currentId = chatSel.kind === 'openai' ? chatSel.modelId.trim() : '';
+          if (currentId !== trimmedModelId || !prev.openAiConfig) return prev;
+          return {
+            ...prev,
+            openAiConfig: {
+              ...prev.openAiConfig,
+              displayAlias: alias,
+            },
+          };
+        });
+      };
+      const sysSelection = resolveSelection(nextSettings, 'system');
+      if (sysSelection.kind === 'none') {
+        if (withFeedback) {
+          setAliasAutoStatus('error');
+          setAliasAutoStatusText(t('settings.ai.aliasGenerateNoSystemAi'));
+          setAliasAutoBusy(false);
+        }
+        return;
+      }
+      if (sysSelection.kind === 'openai' && !nextSettings.openAiConfig?.baseUrl?.trim()) {
+        if (withFeedback) {
+          setAliasAutoStatus('error');
+          setAliasAutoStatusText(t('settings.ai.aliasGenerateNoSystemAi'));
+          setAliasAutoBusy(false);
+        }
+        return;
+      }
+      let session: Awaited<ReturnType<typeof createDriverSession>> | null = null;
+      try {
+        session = await createDriverSession({
+          driverId: sysSelection.kind as AiDriverId,
+          settings:
+            sysSelection.kind === 'openai'
+              ? { ...nextSettings, openAiConfig: { ...nextSettings.openAiConfig!, modelId: sysSelection.modelId } }
+              : nextSettings,
+          create: LM_CORE,
+        });
+        const prompts = [
+          `You must generate a short alias from a model id.
+Rules:
+- Use only words/tokens that already exist in the model id.
+- Never invent provider/vendor names.
+- Keep it natural and readable for humans.
+- Keep it <= ${AUTO_ALIAS_MAX_CHARS} characters.
+- Output format must be exactly: ALIAS: <text>
+Examples:
+- gemma-4-27b-it => ALIAS: Gemma 4
+- deepseek-r1-0528-qwen3-8b => ALIAS: DeepSeek R1
+Now generate alias for:
+Model id: ${trimmedModelId}`,
+          `Retry. Your previous output was invalid.
+Pick one alias from this candidate list and output exactly in format "ALIAS: <text>".
+Candidates: ${aliasCandidatesFromModelId(trimmedModelId).join(' | ')}
+Model id: ${trimmedModelId}`,
+        ];
+
+        for (const prompt of prompts) {
+          const ac = new AbortController();
+          const out = await runLanguageModelPlainText(
+            session,
+            [
+              {
+                role: 'user',
+                content: prompt,
+              },
+            ],
+            ac.signal,
+          );
+          let aliasCandidate = parseAliasFromModelResponse(out);
+          if (!aliasCandidate || !isAcceptableAiGeneratedAlias(aliasCandidate, trimmedModelId)) {
+            const lines = out
+              .trim()
+              .split(/\r?\n/)
+              .map((l) => l.trim())
+              .filter(Boolean);
+            for (let i = lines.length - 1; i >= 0; i--) {
+              const cand = normalizeAliasLine(
+                lines[i]!.replace(/^[-*`\s]+|["'`]+/g, '').replace(/["'`]+$/, ''),
+              );
+              if (
+                cand &&
+                isAcceptableAiGeneratedAlias(cand, trimmedModelId) &&
+                aliasLooksGroundedInModelId(cand, trimmedModelId)
+              ) {
+                aliasCandidate = cand;
+                break;
+              }
+            }
+          }
+          if (
+            !aliasCandidate ||
+            !isAcceptableAiGeneratedAlias(aliasCandidate, trimmedModelId) ||
+            !aliasLooksGroundedInModelId(aliasCandidate, trimmedModelId)
+          ) {
+            continue;
+          }
+          applyAlias(aliasCandidate);
+          if (withFeedback) {
+            setAliasAutoStatus('ok');
+            setAliasAutoStatusText(t('settings.ai.aliasGenerated'));
+          }
+          return;
+        }
+        if (withFeedback) {
+          setAliasAutoStatus('error');
+          setAliasAutoStatusText(t('settings.ai.aliasGenerateFailed'));
+        }
+      } catch {
+        if (withFeedback) {
+          setAliasAutoStatus('error');
+          setAliasAutoStatusText(t('settings.ai.aliasGenerateFailed'));
+        }
+      } finally {
+        session?.destroy();
+        if (withFeedback) {
+          setAliasAutoBusy(false);
+        }
+      }
+    },
+    [t],
+  );
+
+  const aliasFieldDisabled = settingsDraft.autoAliasExternalModel || !settingsDraft.openAiConfig;
+
+  useEffect(() => {
+    if (aiPickerTarget === null) return;
+    if (!shouldAutoFocusComposerInput()) return;
+    const tid = window.setTimeout(() => {
+      aiPickerSearchInputRef.current?.focus();
+      aiPickerSearchInputRef.current?.select();
+    }, 0);
+    return () => window.clearTimeout(tid);
+  }, [aiPickerTarget]);
 
   const lmRef = useRef<LanguageModel | null>(null);
   const lmUsesImagesRef = useRef(false);
@@ -647,7 +891,19 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   }, [bootstrapSessions]);
 
   useEffect(() => {
-    void loadSettings().then(setSettingsDraft);
+    void loadSettings().then((loaded) => {
+      const shouldAutoSelectNano =
+        languageModelSupported() &&
+        resolveSelection(loaded, 'chat').kind === 'none' &&
+        resolveSelection(loaded, 'system').kind === 'none';
+      if (shouldAutoSelectNano) {
+        const next = withSelection(withSelection(loaded, 'chat', { kind: 'nano' }), 'system', { kind: 'nano' });
+        setSettingsDraft(next);
+        void saveSettings(next);
+        return;
+      }
+      setSettingsDraft(loaded);
+    });
   }, []);
 
   useEffect(() => {
@@ -662,20 +918,13 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     }
   }, [settingsDraft.maxImageAttachmentMib]);
 
-  /** API Emulation settings only exist when the OpenAI-compatible polyfill is active (no native Prompt API). */
-  useEffect(() => {
-    if (
-      settingsOpen &&
-      settingsSection === 'remoteModel' &&
-      !isOpenAiLanguageModelPolyfillInstalled()
-    ) {
-      setSettingsSection('general');
-    }
-  }, [settingsOpen, settingsSection]);
-
   useEffect(() => {
     let cancelled = false;
-    if (!nanoLmRuntimeOk) {
+    if (chatSelection.kind === 'openai') {
+      setImageInputSupported(settingsDraft.openAiConfig?.supportsVision === true);
+      return undefined;
+    }
+    if (!nanoLmRuntimeOk || chatSelection.kind !== 'nano') {
       setImageInputSupported(false);
       return undefined;
     }
@@ -685,7 +934,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     return () => {
       cancelled = true;
     };
-  }, [nanoLmRuntimeOk]);
+  }, [chatSelection.kind, nanoLmRuntimeOk, settingsDraft.openAiConfig?.supportsVision]);
 
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
@@ -743,16 +992,16 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   );
 
   useEffect(() => {
-    setModelUiName(modelLabelForSession(lmRef.current, t));
-  }, [t]);
+    setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
+  }, [settingsDraft, t]);
 
   useEffect(() => {
-    if (!nanoLmRuntimeOk) return undefined;
+    if (chatSelection.kind === 'none' || !chatAiUsable) return undefined;
     let cancelled = false;
     lmRef.current?.destroy();
     lmRef.current = null;
     lmUsesImagesRef.current = false;
-    setModelUiName(modelLabelForSession(null, t));
+    setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
     const sid = activeSessionId;
     if (!sid) return undefined;
 
@@ -763,28 +1012,37 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         return;
       }
       try {
+        const sel = resolveSelection(settings, 'chat');
+        if (sel.kind === 'none') return;
         const geo = await resolveApproximateLocation(2600);
         const ctx = defaultSessionSystemContext(lang, geo);
-        const usesImages = threadUsesImageInputs(msgs);
+        const usesImages = sel.kind === 'nano' ? threadUsesImageInputs(msgs) : false;
         const initial = await buildSessionInitialPromptsAsync(settings, msgs, ctx, {
           attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
           resolveUserModelText: (m) => modelPromptTextFromUserMessage(m, t),
         });
-        const session = await LanguageModel.create({
-          ...lmCoreForThreadUsesImages(usesImages),
-          ...(initial ? { initialPrompts: initial } : {}),
-          monitor(m) {
-            m.addEventListener('downloadprogress', (ev) => {
-              const total = ev.total || 1;
-              const pct = Math.round((ev.loaded / total) * 100);
-              setDownloadPct(Number.isFinite(pct) ? pct : null);
-            });
+        const session = await createDriverSession({
+          driverId: sel.kind as AiDriverId,
+          settings:
+            sel.kind === 'openai'
+              ? { ...settings, openAiConfig: { ...settings.openAiConfig!, modelId: sel.modelId } }
+              : settings,
+          create: {
+            ...lmCoreForThreadUsesImages(usesImages),
+            ...(initial ? { initialPrompts: initial } : {}),
+            monitor(m) {
+              m.addEventListener('downloadprogress', (ev) => {
+                const total = ev.total || 1;
+                const pct = Math.round((ev.loaded / total) * 100);
+                setDownloadPct(Number.isFinite(pct) ? pct : null);
+              });
+            },
           },
         });
         if (!cancelled) {
           lmRef.current = session;
           lmUsesImagesRef.current = usesImages;
-          setModelUiName(modelLabelForSession(session, t));
+          setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
           setDownloadPct(null);
         } else {
           session.destroy();
@@ -801,9 +1059,9 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       lmRef.current?.destroy();
       lmRef.current = null;
       lmUsesImagesRef.current = false;
-      setModelUiName(modelLabelForSession(null, t));
+      setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
     };
-  }, [activeSessionId, lang, nanoLmRuntimeOk, t]);
+  }, [activeSessionId, chatAiUsable, chatSelection.kind, lang, settingsDraft, t]);
 
   useEffect(
     () => () => {
@@ -997,6 +1255,12 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     void (async () => {
       await resetToFreshSingleChat();
       const empty: LocalSettings = {
+        chatAiModelKey: undefined,
+        systemAiModelKey: undefined,
+        chatAiId: undefined,
+        systemAiId: undefined,
+        openAiConfig: undefined,
+        autoAliasExternalModel: true,
         systemPrompt: '',
         preferredName: '',
         chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
@@ -1006,7 +1270,6 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       };
       await saveSettings(empty);
       setSettingsDraft(empty);
-      clearOpenAiLmPolyfillConfig();
       setSettingsNotice(t('settings.clearedAllData'));
     })();
   }, [resetToFreshSingleChat, t]);
@@ -1099,7 +1362,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
 
   const addComposerFiles = useCallback(
     async (list: FileList | null) => {
-      if (!list?.length || !activeSessionId || !nanoLmRuntimeOk || busy) return;
+      if (!list?.length || !activeSessionId || !chatAiUsable || busy) return;
       setError(null);
       const maxImageBytes = maxImageAttachmentBytesFromSettings(settingsDraft);
       const imgLimitLabel = formatImageSizeLimitLabel(maxImageBytes);
@@ -1176,8 +1439,8 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     [
       activeSessionId,
       busy,
+      chatAiUsable,
       imageInputSupported,
-      nanoLmRuntimeOk,
       pendingAttachments,
       settingsDraft,
       t,
@@ -1195,11 +1458,11 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
 
   const onComposerDragEnter = useCallback(
     (e: DragEvent<HTMLFormElement>) => {
-      if (!nanoLmRuntimeOk || !activeSessionId) return;
+      if (!chatAiUsable || !activeSessionId) return;
       if (!dataTransferHasFiles(e.dataTransfer)) return;
       if (!busy) setComposerImageDropHover(true);
     },
-    [activeSessionId, busy, dataTransferHasFiles, nanoLmRuntimeOk],
+    [activeSessionId, busy, chatAiUsable, dataTransferHasFiles],
   );
 
   const onComposerDragLeave = useCallback((e: DragEvent<HTMLFormElement>) => {
@@ -1210,7 +1473,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
 
   const onComposerDragOver = useCallback(
     (e: DragEvent<HTMLFormElement>) => {
-      if (!nanoLmRuntimeOk || !activeSessionId) return;
+      if (!chatAiUsable || !activeSessionId) return;
       if (!dataTransferHasFiles(e.dataTransfer)) return;
       e.preventDefault();
       try {
@@ -1219,13 +1482,13 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         /* ignore */
       }
     },
-    [activeSessionId, busy, dataTransferHasFiles, nanoLmRuntimeOk],
+    [activeSessionId, busy, chatAiUsable, dataTransferHasFiles],
   );
 
   const onComposerDrop = useCallback(
     (e: DragEvent<HTMLFormElement>) => {
       setComposerImageDropHover(false);
-      if (!nanoLmRuntimeOk || !activeSessionId) return;
+      if (!chatAiUsable || !activeSessionId) return;
       if (!dataTransferHasFiles(e.dataTransfer)) return;
       e.preventDefault();
       if (busy) return;
@@ -1233,7 +1496,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       if (!files?.length) return;
       void addComposerFiles(files);
     },
-    [activeSessionId, addComposerFiles, busy, dataTransferHasFiles, nanoLmRuntimeOk],
+    [activeSessionId, addComposerFiles, busy, chatAiUsable, dataTransferHasFiles],
   );
 
   const runUserTurnStream = useCallback(
@@ -1262,27 +1525,36 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         }
         lmRef.current = null;
         lmUsesImagesRef.current = false;
-        setModelUiName(modelLabelForSession(null, t));
+        setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
       }
 
       const settings = await loadSettings();
+      const chatSel = resolveSelection(settings, 'chat');
+      if (chatSel.kind === 'none') {
+        throw new Error('error.noLm');
+      }
       const nextMsgs = [...prior, userMsg];
       await persistMessages(sessionId, nextMsgs);
 
       const assistantId = makeId();
+      const assistantHeading = chatAiComposerDisplayLabel(chatSel, settings, t);
       const assistantShell: ChatMessage = {
         id: assistantId,
         role: 'assistant',
         content: '',
         createdAt: isoNow(),
+        reasoning: '',
+        assistantDisplayName: assistantHeading,
       };
       await persistMessages(sessionId, [...nextMsgs, assistantShell]);
 
       const ac = new AbortController();
       abortRef.current = ac;
 
-      const needsMm = pendingHasImages || threadUsesImageInputs(prior);
+      const needsMm = chatSel.kind === 'nano' && (pendingHasImages || threadUsesImageInputs(prior));
       let partsToClose: LanguageModelMessageContent[] | null = null;
+      let unbindReasoning: (() => void) | null = null;
+      let reasoningAcc = '';
       let timedOutBeforeFirstChunk = false;
       let streamWatchdogTid: ReturnType<typeof window.setTimeout> | null = null;
       const clearStreamWatchdog = () => {
@@ -1310,25 +1582,54 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
             attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
             resolveUserModelText: (m) => modelPromptTextFromUserMessage(m, t),
           });
-          const session = await LanguageModel.create({
-            ...lmCoreForThreadUsesImages(needsMm),
-            ...(initial ? { initialPrompts: initial } : {}),
-            monitor(m) {
-              m.addEventListener('downloadprogress', (ev) => {
-                const total = ev.total || 1;
-                const pct = Math.round((ev.loaded / total) * 100);
-                setDownloadPct(Number.isFinite(pct) ? pct : null);
-              });
+          const session = await createDriverSession({
+            driverId: chatSel.kind,
+            settings:
+              chatSel.kind === 'openai'
+                ? { ...settings, openAiConfig: { ...settings.openAiConfig!, modelId: chatSel.modelId } }
+                : settings,
+            create: {
+              ...lmCoreForThreadUsesImages(needsMm),
+              ...(initial ? { initialPrompts: initial } : {}),
+              monitor(m) {
+                m.addEventListener('downloadprogress', (ev) => {
+                  const total = ev.total || 1;
+                  const pct = Math.round((ev.loaded / total) * 100);
+                  setDownloadPct(Number.isFinite(pct) ? pct : null);
+                });
+              },
             },
           });
           lmRef.current = session;
           lmUsesImagesRef.current = needsMm;
-          setModelUiName(modelLabelForSession(session, t));
+          setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
           setDownloadPct(null);
         }
         const session = lmRef.current;
         if (!session) {
           throw new Error('error.noLm');
+        }
+        const onReasoningDelta = (ev: Event) => {
+          const detail = (ev as CustomEvent<{ delta?: string; full?: string }>).detail;
+          const next =
+            typeof detail?.full === 'string'
+              ? detail.full
+              : typeof detail?.delta === 'string'
+                ? `${reasoningAcc}${detail.delta}`
+                : reasoningAcc;
+          reasoningAcc = next;
+          setMessages((prev) => {
+            const out = prev.map((m) => (m.id === assistantId ? { ...m, reasoning: reasoningAcc } : m));
+            void saveMessages(sessionId, out);
+            return out;
+          });
+        };
+        try {
+          session.addEventListener('minerva:reasoning-delta', onReasoningDelta as EventListener);
+          unbindReasoning = () =>
+            session.removeEventListener('minerva:reasoning-delta', onReasoningDelta as EventListener);
+        } catch {
+          unbindReasoning = null;
         }
         const startedAt = performance.now();
         let firstTokenAt: number | null = null;
@@ -1380,14 +1681,22 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         }
         const finishedAt = performance.now();
         const stats = buildNanoTurnStats({
-          modelId: modelLabelForSession(session, t),
+          modelId:
+            chatSel.kind === 'nano'
+              ? t('model.geminiNanoBrand')
+              : chatSel.modelId.trim() || '?',
           startedAt,
           finishedAt,
           firstTokenAt,
           outputText: acc,
           contextMessages: nextMsgs,
         });
-        const assistantFinal: ChatMessage = { ...assistantShell, content: acc, nanoTurnStats: stats };
+        const assistantFinal: ChatMessage = {
+          ...assistantShell,
+          content: acc,
+          nanoTurnStats: stats,
+          ...(reasoningAcc.trim() ? { reasoning: reasoningAcc } : {}),
+        };
         setMessages((prev) => {
           const out = prev.map((m) => (m.id === assistantId ? assistantFinal : m));
           void saveMessages(sessionId, out);
@@ -1396,11 +1705,17 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         const finalThread: ChatMessage[] = [...nextMsgs, assistantFinal];
         const userCount = nextMsgs.filter((m) => m.role === 'user').length;
         const interval = settings.chatTitleRefreshEveryUserMessages;
-        if (shouldRefreshChatTitle(userCount, interval)) {
+        const sysSel = resolveSelection(settings, 'system');
+        if (sysSel.kind !== 'none' && shouldRefreshChatTitle(userCount, interval)) {
+          const settingsForSystem =
+            sysSel.kind === 'openai'
+              ? { ...settings, openAiConfig: { ...settings.openAiConfig!, modelId: sysSel.modelId } }
+              : settings;
           const sid = sessionId;
           const titleAc = new AbortController();
           const tid = window.setTimeout(() => titleAc.abort(), 55_000);
-          void generateChatTitleWithOnDeviceModel({
+          void generateChatTitleWithSystemAi({
+            settings: settingsForSystem,
             lang,
             messages: finalThread,
             fallback: t('defaultChatTitle'),
@@ -1452,6 +1767,11 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
           });
         }
       } finally {
+        try {
+          unbindReasoning?.();
+        } catch {
+          /* ignore */
+        }
         clearStreamWatchdog();
         if (partsToClose) {
           closeImageBitmaps(partsToClose.filter((p) => p.type === 'image'));
@@ -1465,7 +1785,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   );
 
   const send = useCallback(async () => {
-    if (!nanoLmRuntimeOk) return;
+    if (!chatAiUsable) return;
     const text = input.trim();
     const pending = [...pendingAttachments];
     if ((!text && pending.length === 0) || busy || !activeSessionId) return;
@@ -1500,10 +1820,10 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   }, [
     activeSessionId,
     busy,
+    chatAiUsable,
     imageInputSupported,
     input,
     messages,
-    nanoLmRuntimeOk,
     pendingAttachments,
     runUserTurnStream,
     t,
@@ -1524,7 +1844,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
 
   const submitEditedUserMessage = useCallback(
     (text: string, attachments: ChatAttachment[]) => {
-      if (!editUserDialog || !activeSessionId || !nanoLmRuntimeOk) return;
+      if (!editUserDialog || !activeSessionId || !chatAiUsable) return;
       const idx = editUserDialog.idx;
       const pendingHasImages = attachments.some(isChatImageAttachment);
       if (pendingHasImages && !imageInputSupported) {
@@ -1563,9 +1883,9 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     [
       activeSessionId,
       closeEditUserMessage,
+      chatAiUsable,
       editUserDialog,
       imageInputSupported,
-      nanoLmRuntimeOk,
       runUserTurnStream,
       t,
     ],
@@ -1584,7 +1904,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
 
   const resendUserMessageAt = useCallback(
     (idx: number) => {
-      if (!nanoLmRuntimeOk || busy || !activeSessionId) return;
+      if (!chatAiUsable || busy || !activeSessionId) return;
       const cur = messagesRef.current;
       const m = cur[idx];
       if (!m || m.role !== 'user') return;
@@ -1608,7 +1928,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         resetLanguageModel: true,
       });
     },
-    [activeSessionId, busy, imageInputSupported, nanoLmRuntimeOk, runUserTurnStream, t],
+    [activeSessionId, busy, chatAiUsable, imageInputSupported, runUserTurnStream, t],
   );
 
   const stop = useCallback(() => {
@@ -1633,6 +1953,15 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       void (async () => {
         const msgs = msgsOverride ?? (await loadMessages(sessionId));
         summaryAbortRef.current?.abort();
+        if (systemSelection.kind === 'none' || !systemAiUsable) {
+          summaryAbortRef.current = null;
+          setSummarySessionLabel(sessionLabel);
+          setSummaryOpen(true);
+          setSummaryInFlight(false);
+          setSummaryBody('');
+          setSummaryError(t('chat.summary.error'));
+          return;
+        }
         if (!msgs.some((m) => m.role === 'user')) {
           summaryAbortRef.current = null;
           setSummarySessionLabel(sessionLabel);
@@ -1661,7 +1990,12 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         setSummaryInFlight(true);
         setSummaryBody('');
         setSummaryError(null);
-        void summarizeChatMessages({
+        const settingsForSystem =
+          systemSelection.kind === 'openai'
+            ? { ...settingsDraft, openAiConfig: { ...settingsDraft.openAiConfig!, modelId: systemSelection.modelId } }
+            : settingsDraft;
+        void summarizeWithSystemAi({
+          settings: settingsForSystem,
           lang,
           messages: msgs,
           signal: ac.signal,
@@ -1684,7 +2018,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
           });
       })();
     },
-    [lang, t],
+    [lang, settingsDraft, systemAiUsable, systemSelection.kind, systemSelectionModelId, t],
   );
 
   useEffect(() => {
@@ -1693,12 +2027,11 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       refineAbortRef.current = null;
     } else {
       setSettingsRefineError(null);
-      setSettingsSection('general');
     }
   }, [settingsOpen]);
 
   const refineSystemPromptWithAi = useCallback(async () => {
-    if (busy || refiningSystemPrompt || !nanoLmRuntimeOk) return;
+    if (busy || refiningSystemPrompt || systemSelection.kind === 'none' || !systemAiUsable) return;
     setSettingsRefineError(null);
     setSettingsNotice(null);
     setRefiningSystemPrompt(true);
@@ -1709,7 +2042,14 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       const draft = settingsDraft.systemPrompt.trim();
       const instruction = t('settings.systemPromptRefine.instruction');
       const userPrompt = `${instruction}\n\n--- Current draft ---\n${draft || '(empty)'}\n---`;
-      session = await LanguageModel.create({ ...LM_CORE });
+      session = await createDriverSession({
+        driverId: systemSelection.kind,
+        settings:
+          systemSelection.kind === 'openai'
+            ? { ...settingsDraft, openAiConfig: { ...settingsDraft.openAiConfig!, modelId: systemSelection.modelId } }
+            : settingsDraft,
+        create: { ...LM_CORE },
+      });
       let acc = '';
       const stream = session.promptStreaming(userPrompt, { signal: ac.signal });
       await consumeTextStream(
@@ -1744,14 +2084,16 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       session?.destroy();
       setRefiningSystemPrompt(false);
     }
-  }, [busy, nanoLmRuntimeOk, refiningSystemPrompt, settingsDraft.systemPrompt, t]);
+  }, [busy, refiningSystemPrompt, settingsDraft, systemAiUsable, systemSelection.kind, systemSelectionModelId, t]);
 
   const canSendMessage = useMemo(
     () =>
       Boolean(activeSessionId) &&
+      chatSelection.kind !== 'none' &&
+      chatAiUsable &&
       !busy &&
       (input.trim().length > 0 || pendingAttachments.length > 0),
-    [activeSessionId, busy, input, pendingAttachments.length],
+    [activeSessionId, busy, chatAiUsable, chatSelection.kind, input, pendingAttachments.length],
   );
 
   const listableSessions = useMemo(
@@ -1789,7 +2131,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
 
   const onComposerPaste = useCallback(
     (e: ClipboardEvent<HTMLTextAreaElement>) => {
-      if (!nanoLmRuntimeOk || busy || !activeSessionId) return;
+      if (!chatAiUsable || busy || !activeSessionId) return;
       const imageFiles = imageInputSupported ? collectPastedImageFilesFromClipboard(e.clipboardData) : [];
       const textFiles = collectPastedTextFilesFromClipboard(e.clipboardData);
       if (!imageFiles.length && !textFiles.length) return;
@@ -1803,7 +2145,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       }
       void addComposerFiles(dt.files);
     },
-    [activeSessionId, addComposerFiles, busy, imageInputSupported, nanoLmRuntimeOk],
+    [activeSessionId, addComposerFiles, busy, chatAiUsable, imageInputSupported],
   );
 
   const updateMessagesBottomFade = useCallback(() => {
@@ -1838,18 +2180,6 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       ro.disconnect();
     };
   }, [updateMessagesBottomFade, activeSessionId]);
-
-  if (!nanoLmRuntimeOk) {
-    return (
-      <div className="auth-screen">
-        <div className="auth-card">
-          <h1>{t('brand.name')}</h1>
-          <p>{t('gate.unsupported')}</p>
-          <p className="hint">{t('gate.unsupportedHint')}</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="app">
@@ -2044,9 +2374,8 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
               {messages.length === 0 ? (
                 <div className="empty">
                   <strong>{t('empty.title')}</strong>
-                  <p>{t('empty.bodyWhere')}</p>
                   <p>{t('empty.bodyKeys')}</p>
-                  {nanoLmRuntimeOk ? <p>{t('empty.attachHint')}</p> : null}
+                  {chatAiUsable ? <p>{t('empty.attachHint')}</p> : null}
                 </div>
               ) : (
                 messages.map((m, i) => {
@@ -2133,7 +2462,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                             <button
                               type="button"
                               className="msg-user-action-btn"
-                              disabled={!nanoLmRuntimeOk || busy}
+                              disabled={!chatAiUsable || busy}
                               title={t('chat.userMessage.edit')}
                               aria-label={t('chat.userMessage.edit')}
                               onClick={() => openEditUserMessage(i)}
@@ -2143,7 +2472,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                             <button
                               type="button"
                               className="msg-user-action-btn"
-                              disabled={!nanoLmRuntimeOk || busy}
+                              disabled={!chatAiUsable || busy}
                               title={t('chat.userMessage.resend')}
                               aria-label={t('chat.userMessage.resend')}
                               onClick={() => resendUserMessageAt(i)}
@@ -2171,12 +2500,26 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                     <div key={m.id} className="msg-stack msg-assistant-stack">
                       <div className="msg msg-assistant">
                         <div className="msg-bubble-header">
-                          <span className="msg-role">{modelUiName}</span>
+                          <span className="msg-role msg-role-ai">
+                            {truncateComposerAiName(
+                              m.assistantDisplayName?.trim() ||
+                                m.nanoTurnStats?.modelId?.trim() ||
+                                t('composer.mobileChipAssistant'),
+                            )}
+                          </span>
                           <div className="msg-bubble-meta-row">
                             <MessageTimestamp createdAt={m.createdAt} lang={lang} t={t} />
                           </div>
                         </div>
                         <div className="msg-body">
+                          {m.reasoning?.trim() ? (
+                            <details className="msg-reasoning" open={streaming}>
+                              <summary>{t('chat.reasoning.title')}</summary>
+                              <div className="msg-reasoning-body">
+                                <ChatMarkdown content={m.reasoning} theme={theme} t={t} />
+                              </div>
+                            </details>
+                          ) : null}
                           {m.content ? (
                             <ChatMarkdown content={m.content} theme={theme} t={t} />
                           ) : null}
@@ -2234,18 +2577,14 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                 >
                   <div className="composer-mobile-chip composer-mobile-chip--assistant">
                     <span className="composer-mobile-chip-label">{t('composer.mobileChipAssistant')}</span>
-                    {isOpenAiLanguageModelPolyfillInstalled() ? (
-                      <button
-                        type="button"
-                        className="composer-mobile-chip-value composer-mobile-chip-value--remote-lm"
-                        onClick={openRemoteLanguageModelSettings}
-                        title={t('settings.remoteLm.openFromComposerHint')}
-                      >
-                        {modelUiName}
-                      </button>
-                    ) : (
-                      <span className="composer-mobile-chip-value">{modelUiName}</span>
-                    )}
+                    <button
+                      type="button"
+                      className="composer-mobile-chip-value composer-mobile-chip-value--remote-lm composer-mobile-chip-value--ai"
+                      onClick={openRemoteLanguageModelSettings}
+                      title={t('settings.remoteLm.openFromComposerHint')}
+                    >
+                      {modelUiNameForPrompt}
+                    </button>
                   </div>
                   {settingsDraft.preferredName.trim() ? (
                     <div className="composer-mobile-chip composer-mobile-chip--you">
@@ -2263,23 +2602,19 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                   >
                     <span className="composer-model-row">
                       <span className="composer-model-name-wrap">
-                        {isOpenAiLanguageModelPolyfillInstalled() ? (
-                          <button
-                            type="button"
-                            className="composer-model-name composer-model-name--clickable"
-                            onClick={openRemoteLanguageModelSettings}
-                            title={t('settings.remoteLm.openFromComposerHint')}
-                          >
-                            {modelUiName}
-                          </button>
-                        ) : (
-                          <span className="composer-model-name">{modelUiName}</span>
-                        )}
+                        <button
+                          type="button"
+                          className="composer-model-name composer-model-name--clickable composer-model-name--ai"
+                          onClick={openRemoteLanguageModelSettings}
+                          title={t('settings.remoteLm.openFromComposerHint')}
+                        >
+                          {modelUiNameForPrompt}
+                        </button>
                       </span>
                     </span>
                   </div>
                   <div className="composer-rail" role="toolbar" aria-label={t('composer.toolbarAria')}>
-                    {nanoLmRuntimeOk ? (
+                    {chatAiUsable ? (
                       <button
                         type="button"
                         className="btn btn-ghost btn-icon composer-rail-btn composer-attach-btn"
@@ -2450,23 +2785,26 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         </svg>
       </button>
 
-      <DraggableDialog
+      <DraggableWindow
         open={settingsOpen}
         title={t('settings.title')}
         closeAriaLabel={t('dialog.close')}
+        maximizeAriaLabel={t('settings.window.maximize')}
+        restoreAriaLabel={t('settings.window.restore')}
         mobileBackAriaLabel={t('dialog.back')}
         onClose={() => setSettingsOpen(false)}
-        width={680}
+        width={760}
+        height={680}
+        minWidth={650}
+        minHeight={560}
         variant="solid"
       >
-        <div className="dialog-fields settings-dialog-fields settings-dialog-fields--modal settings-dialog-root">
+        <div className="dialog-fields settings-dialog-fields settings-dialog-fields--modal settings-dialog-root settings-dialog-root--window">
           <p className="hint settings-dialog-lead">{t('settings.lead')}</p>
           {settingsRefineError ? <p className="settings-dialog-error">{settingsRefineError}</p> : null}
           <div className="settings-vscode-split">
             <nav className="settings-vscode-nav" role="tablist" aria-label={t('settings.navAria')}>
-              {SETTINGS_SECTION_IDS.filter(
-                (id) => id !== 'remoteModel' || isOpenAiLanguageModelPolyfillInstalled(),
-              ).map((id) => (
+              {SETTINGS_SECTION_IDS.map((id) => (
                 <button
                   key={id}
                   type="button"
@@ -2565,19 +2903,119 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                   </div>
                 </div>
               ) : null}
-              {settingsSection === 'remoteModel' && isOpenAiLanguageModelPolyfillInstalled() ? (
+              {settingsSection === 'remoteModel' ? (
                 <div id="settings-pane-remote-lm">
                   <h3 className="settings-vscode-pane-title">{t('settings.sectionRemoteLm')}</h3>
-                  <OpenAiLmPolyfillSettingsForm
-                    t={t}
-                    onSaved={() => {
-                      setSettingsNotice(t('settings.remoteLm.saved'));
-                      lmRef.current?.destroy();
-                      lmRef.current = null;
-                      lmUsesImagesRef.current = false;
-                      setModelUiName(modelLabelForSession(null, t));
-                    }}
-                  />
+                  <div className="field">
+                    <label>{t('settings.ai.system')}</label>
+                    <button
+                      type="button"
+                      className="openai-lm-model-trigger"
+                      onClick={() => {
+                        setAiPickerSearch('');
+                        setAiPickerFilter('all');
+                        setAiPickerTarget('system');
+                        void refreshExternalModels();
+                      }}
+                    >
+                      <span className="openai-lm-model-trigger-label">
+                        {aiSelectionSettingsLabel(systemSelection, t)}
+                      </span>
+                    </button>
+                  </div>
+                  <div className="field">
+                    <label>{t('settings.ai.chat')}</label>
+                    <button
+                      type="button"
+                      className="openai-lm-model-trigger"
+                      onClick={() => {
+                        setAiPickerSearch('');
+                        setAiPickerFilter('all');
+                        setAiPickerTarget('chat');
+                        void refreshExternalModels();
+                      }}
+                    >
+                      <span className="openai-lm-model-trigger-label">
+                        {aiSelectionSettingsLabel(chatSelection, t)}
+                      </span>
+                    </button>
+                  </div>
+                  <div className="field">
+                    <div className="settings-switch-row">
+                      <label id="settings-auto-alias-switch">{t('settings.ai.autoAlias')}</label>
+                      <BoolSwitch
+                        aria-labelledby="settings-auto-alias-switch"
+                        checked={settingsDraft.autoAliasExternalModel}
+                        onChange={(next) => {
+                          setSettingsDraft((d) => ({ ...d, autoAliasExternalModel: next }));
+                          setSettingsNotice(null);
+                        }}
+                      />
+                    </div>
+                    <p className="hint">{t('settings.ai.autoAliasHelp')}</p>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="settings-ai-alias">{t('settings.ai.alias')}</label>
+                    <div className="settings-ai-alias-input">
+                      <input
+                        id="settings-ai-alias"
+                        type="text"
+                        maxLength={AUTO_ALIAS_MAX_CHARS}
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder={t('settings.ai.aliasPlaceholder')}
+                        disabled={aliasFieldDisabled}
+                        value={settingsDraft.openAiConfig?.displayAlias ?? ''}
+                        onChange={(e) => {
+                          const nextAlias = e.target.value.slice(0, AUTO_ALIAS_MAX_CHARS);
+                          setSettingsDraft((d) => {
+                            if (!d.openAiConfig) return d;
+                            return {
+                              ...d,
+                              openAiConfig: {
+                                ...d.openAiConfig,
+                                displayAlias: nextAlias,
+                              },
+                            };
+                          });
+                          setSettingsNotice(null);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="settings-ai-alias-action"
+                        disabled={aliasAutoBusy}
+                        onClick={() => {
+                          void autoGenerateExternalAlias(settingsDraft, {
+                            force: true,
+                            feedback: true,
+                          });
+                        }}
+                        aria-label={t('settings.ai.aliasGenerateAria')}
+                        title={t('settings.ai.aliasGenerateAria')}
+                      >
+                        <AiActionIcon size={16} />
+                      </button>
+                    </div>
+                    {aliasAutoStatusText ? (
+                      <p
+                        className={
+                          aliasAutoStatus === 'error'
+                            ? 'settings-dialog-error'
+                            : aliasAutoStatus === 'ok'
+                              ? 'openai-lm-test-status openai-lm-test-status--ok'
+                              : 'openai-lm-test-status'
+                        }
+                      >
+                        {aliasAutoStatusText}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="field settings-ai-configure-row">
+                    <button type="button" className="btn btn-outline" onClick={() => setExternalConfigOpen(true)}>
+                      {t('settings.remoteLm.configure')}
+                    </button>
+                  </div>
                 </div>
               ) : null}
               {settingsSection === 'profile' ? (
@@ -2866,6 +3304,148 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
             </div>
           </div>
         </div>
+      </DraggableWindow>
+
+      <DraggableDialog
+        open={aiPickerTarget !== null}
+        title={aiPickerTarget === 'system' ? t('settings.ai.system') : t('settings.ai.chat')}
+        closeAriaLabel={t('dialog.close')}
+        mobileBackAriaLabel={t('dialog.back')}
+        onClose={() => {
+          setAiPickerTarget(null);
+          setAiPickerSearch('');
+          setAiPickerFilter('all');
+        }}
+        width={460}
+        variant="solid"
+      >
+        <div className="openai-lm-model-dialog-inner">
+          <div className="openai-lm-model-picker-toolbar">
+            <input
+              ref={aiPickerSearchInputRef}
+              type="search"
+              className="openai-lm-model-picker-search"
+              value={aiPickerSearch}
+              onChange={(e) => setAiPickerSearch(e.target.value)}
+              placeholder={t('settings.ai.searchPlaceholder')}
+              aria-label={t('settings.ai.searchPlaceholder')}
+              spellCheck={false}
+              autoComplete="off"
+            />
+          </div>
+          <div className="settings-ai-filter-row" role="group" aria-label={t('settings.ai.filter')}>
+            <button
+              type="button"
+              className={`btn btn-ghost settings-ai-filter-btn${aiPickerFilter === 'all' ? ' settings-ai-filter-btn-active' : ''}`}
+              onClick={() => setAiPickerFilter('all')}
+            >
+              {t('settings.ai.filter.all')}
+            </button>
+            <button
+              type="button"
+              className={`btn btn-ghost settings-ai-filter-btn${aiPickerFilter === 'nano' ? ' settings-ai-filter-btn-active' : ''}`}
+              onClick={() => setAiPickerFilter('nano')}
+            >
+              {t('settings.ai.filter.nano')}
+            </button>
+            <button
+              type="button"
+              className={`btn btn-ghost settings-ai-filter-btn${aiPickerFilter === 'external' ? ' settings-ai-filter-btn-active' : ''}`}
+              onClick={() => setAiPickerFilter('external')}
+            >
+              {t('settings.ai.filter.external')}
+            </button>
+            <button
+              type="button"
+              className={`btn btn-ghost settings-ai-filter-btn${aiPickerFilter === 'available' ? ' settings-ai-filter-btn-active' : ''}`}
+              onClick={() => setAiPickerFilter('available')}
+            >
+              {t('settings.ai.filter.available')}
+            </button>
+          </div>
+          <div className="openai-lm-model-picker-list openai-lm-model-picker-list--dialog" role="listbox">
+            <button
+              type="button"
+              role="option"
+              className="openai-lm-model-option openai-lm-model-option--picker"
+              onClick={() => {
+                if (!aiPickerTarget) return;
+                setSettingsDraft((d) => {
+                  const next = withSelection(d, aiPickerTarget, { kind: 'none' });
+                  if (aiPickerTarget === 'chat') {
+                    setModelUiName(chatAiComposerDisplayLabel(resolveSelection(next, 'chat'), next, t));
+                  }
+                  return next;
+                });
+                setAiPickerTarget(null);
+                setSettingsNotice(null);
+              }}
+            >
+              <span className="openai-lm-model-option-label">{t('settings.ai.none')}</span>
+            </button>
+            {filteredAiOptions.map((o) => (
+              <button
+                key={o.key}
+                type="button"
+                role="option"
+                className="openai-lm-model-option openai-lm-model-option--picker"
+                disabled={!o.available}
+                onClick={() => {
+                  if (!aiPickerTarget) return;
+                  const parsed = parseAiModelKey(o.key);
+                  const next = withSelection(settingsDraft, aiPickerTarget, parsed);
+                  setSettingsDraft(next);
+                  if (aiPickerTarget === 'chat') {
+                    setModelUiName(chatAiComposerDisplayLabel(resolveSelection(next, 'chat'), next, t));
+                  }
+                  if (parsed.kind === 'openai') {
+                    void autoGenerateExternalAlias(next);
+                  }
+                  setAiPickerTarget(null);
+                  setSettingsNotice(null);
+                }}
+              >
+                <span className="openai-lm-model-option-label">
+                  {o.label}
+                  {!o.available ? ' (no disponible)' : ''}
+                </span>
+              </button>
+            ))}
+            {filteredAiOptions.length === 0 ? (
+              <div className="openai-lm-model-list-empty hint">{t('settings.ai.empty')}</div>
+            ) : null}
+          </div>
+          {externalModelsBusy ? <p className="hint">{t('settings.remoteLm.modelsLoading')}</p> : null}
+          {externalModelsError ? <p className="settings-dialog-error">{externalModelsError}</p> : null}
+        </div>
+      </DraggableDialog>
+
+      <DraggableDialog
+        open={externalConfigOpen}
+        title={t('settings.remoteLm.configure')}
+        closeAriaLabel={t('dialog.close')}
+        mobileBackAriaLabel={t('dialog.back')}
+        onClose={() => setExternalConfigOpen(false)}
+        width={560}
+        variant="solid"
+      >
+        <OpenAiDriverSettingsForm
+          t={t}
+          value={settingsDraft.openAiConfig}
+          onChange={(next) => {
+            setSettingsDraft((d) => ({ ...d, openAiConfig: next }));
+            setSettingsNotice(null);
+            setSettingsRefineError(null);
+          }}
+          onSaved={() => {
+            setSettingsNotice(t('settings.remoteLm.saved'));
+            lmRef.current?.destroy();
+            lmRef.current = null;
+            lmUsesImagesRef.current = false;
+            void refreshExternalModels();
+            setExternalConfigOpen(false);
+          }}
+        />
       </DraggableDialog>
 
       <MessageDialog
@@ -3021,7 +3601,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
             }
             lmRef.current = null;
             lmUsesImagesRef.current = false;
-            setModelUiName(modelLabelForSession(null, t));
+            setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
             setBusy(false);
             setError(null);
             await persistMessages(sid, next);
@@ -3039,7 +3619,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
           initialAttachments={editUserDialog.initialAttachments}
           onClose={closeEditUserMessage}
           onSave={submitEditedUserMessage}
-          canSave={!busy && Boolean(activeSessionId) && nanoLmRuntimeOk}
+          canSave={!busy && Boolean(activeSessionId) && chatAiUsable}
           emptyError={t('chat.editUserMessage.empty')}
           placeholder={t('placeholder')}
           closeAriaLabel={t('dialog.close')}

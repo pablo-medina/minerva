@@ -45,6 +45,8 @@ type BackupWireMessage = {
   createdAt: string;
   attachments?: BackupWireAttachment[];
   nanoTurnStats?: unknown;
+  reasoning?: string;
+  assistantDisplayName?: string;
 };
 
 type BackupWireChat = {
@@ -91,6 +93,12 @@ async function persistedMessageToWire(m: PersistedChatMessage): Promise<BackupWi
     content: m.content,
     createdAt: m.createdAt,
     ...(m.role === 'assistant' && m.nanoTurnStats ? { nanoTurnStats: m.nanoTurnStats } : {}),
+    ...(m.role === 'assistant' && typeof m.reasoning === 'string' ? { reasoning: m.reasoning } : {}),
+    ...(m.role === 'assistant' &&
+    typeof m.assistantDisplayName === 'string' &&
+    m.assistantDisplayName.trim()
+      ? { assistantDisplayName: m.assistantDisplayName.trim() }
+      : {}),
   };
   if (!m.attachments?.length) return base;
   const attachments: BackupWireAttachment[] = await Promise.all(
@@ -150,6 +158,10 @@ function wireMessageToPersisted(m: unknown): PersistedChatMessage | null {
   if (role === 'assistant') {
     const stats = parseNanoTurnStats(o.nanoTurnStats);
     if (stats) base.nanoTurnStats = stats;
+    if (typeof o.reasoning === 'string' && o.reasoning.trim()) base.reasoning = o.reasoning;
+    if (typeof o.assistantDisplayName === 'string' && o.assistantDisplayName.trim()) {
+      base.assistantDisplayName = o.assistantDisplayName.trim();
+    }
   }
 
   const attRaw = o.attachments;

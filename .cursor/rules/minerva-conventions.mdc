@@ -24,9 +24,21 @@ alwaysApply: true
 - New **components and layouts** must match the **current visual language**: existing CSS variables (`src/index.css`), utility classes in `src/app.css`, spacing, typography, and the established Slate & Electric Blue palette.
 - Prefer extending existing patterns (buttons, fields, dialogs, composer) over introducing unrelated frameworks or one-off styling systems.
 
+## Terminology: "chat prompt"
+
+- In this project, **"chat prompt"** means the whole composer area at the bottom of the chat, not just the text input.
+- It includes the prompt textarea, send/stop actions, attachment and utility buttons, and visible identity labels (Chat AI / user name) shown in that bottom section.
+- When a task mentions changing or syncing something in the "chat prompt", apply it to that full bottom composer section.
+
 ## On-device AI affordances
 
 - For **any control that invokes the on-device model** (refine prompt, summaries, titles, etc.), use the shared **`AiActionIcon`** from `src/components/AiActionIcon.tsx` so the sparkle mark stays consistent across the app.
+
+## System AI safety rule
+
+- Treat **System AI** features (auto-title, auto-summary, refine, and any future helper flows) as **optional**.
+- If no System AI is selected (`undefined` / "Ninguna"), helper flows must **no-op safely** and never break chat send, message persistence, or UI rendering.
+- Guard every System-AI entry point so disabled state degrades gracefully (skip call, keep current flow working, and avoid thrown errors).
 
 ## Persistence and backup / restore
 

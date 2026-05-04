@@ -27,7 +27,7 @@ const en: Dict = {
   'gate.blockedRemoteHint':
     'The base URL is normalized to end with `/v1`. The API key is optional for local servers; it is stored only in this browser’s local storage.',
   'gate.remoteLmLegalFooter':
-    '© 2026 Pablo Medina. Minerva is open source under the MIT License; the API emulation option uses your chosen endpoint and does not change those terms for the app code you run here.',
+    '© 2026 Pablo Medina. Minerva is open source under the MIT License; external AI uses the endpoint you choose and does not change those terms for the app code you run here.',
   'gate.retry': 'Check again',
   'howToEnableLink': 'How to enable Gemini Nano',
   'howToEnableTitle': 'Enable Gemini Nano in Chrome',
@@ -36,7 +36,7 @@ const en: Dict = {
 ## Local development (\`localhost\`)
 
 1. Open \`chrome://flags/#optimization-guide-on-device-model\` — set **Enabled**, then restart Chrome if prompted.
-2. Open \`chrome://flags/#prompt-api-for-gemini-nano-multimodal-input\` — set **Enabled**, then restart Chrome again.
+2. Enable Prompt API image input in your Chrome build (the flag name can change by version/channel; if needed, search for "prompt api" in \`chrome://flags\`) and restart Chrome again.
 
 ## Then
 
@@ -67,7 +67,30 @@ Open \`chrome://on-device-internals\` for download status and logs.`,
     'Preferences and chats are stored in IndexedDB on this device. The system prompt is sent to the model when a chat session starts.',
   'settings.navAria': 'Settings categories',
   'settings.sectionGeneral': 'General',
-  'settings.sectionRemoteLm': 'API Emulation',
+  'settings.sectionRemoteLm': 'AI',
+  'settings.ai.chat': 'Chat AI',
+  'settings.ai.system': 'System AI',
+  'settings.ai.none': 'None',
+  'settings.ai.searchPlaceholder': 'Search models…',
+  'settings.ai.filter': 'Filter models',
+  'settings.ai.filter.all': 'All',
+  'settings.ai.filter.nano': 'Nano',
+  'settings.ai.filter.external': 'External',
+  'settings.ai.filter.available': 'Available',
+  'settings.ai.empty': 'No models match this filter.',
+  'settings.ai.autoAlias': 'Auto-generate external alias',
+  'settings.ai.autoAliasHelp':
+    'When enabled, Minerva asks System AI for a short display alias when you switch to another external model.',
+  'settings.ai.alias': 'Alias',
+  'settings.ai.aliasPlaceholder': 'External AI',
+  'settings.ai.aliasGenerateAria': 'Generate alias with AI',
+  'settings.ai.aliasGenerating': 'Generating alias…',
+  'settings.ai.aliasGenerated': 'Alias generated.',
+  'settings.ai.aliasGenerateFailed': 'Could not generate alias. Try again.',
+  'settings.ai.aliasGenerateNoSystemAi': 'Select a System AI first.',
+  'settings.ai.aliasGenerateBadChatModel': 'Pick an external model in Chat AI first.',
+  'settings.window.maximize': 'Maximize window',
+  'settings.window.restore': 'Restore window',
   'settings.sectionProfile': 'Profile',
   'settings.sectionSystem': 'System prompt',
   'settings.sectionData': 'Data',
@@ -106,12 +129,12 @@ Rules:
   'settings.clearChatsAction': 'Delete chats',
   'settings.clearAllDataTitle': 'Delete all data?',
   'settings.clearAllDataBody':
-    'This removes chats, messages, and settings (including the system prompt) stored for Minerva in this browser. API emulation base URL and API key saved in local storage for this site are removed too.',
+    'This removes chats, messages, and settings (including the system prompt) stored for Minerva in this browser. External AI URL and API key saved for this site are removed too.',
   'settings.remoteLm.lead':
     'When the on-device Prompt API (Gemini Nano) is unavailable, you can point Minerva at an OpenAI-compatible endpoint you trust. Chats and attachments stay in this browser.',
   'settings.remoteLm.offlineNote':
     'Replies are fetched from that URL over the network—offline use is not guaranteed.',
-  'settings.remoteLm.baseUrl': 'Remote Model',
+  'settings.remoteLm.baseUrl': 'URL',
   'settings.remoteLm.baseUrlPlaceholder': 'Use {knownUrls}, or type your base URL (e.g. https://api.openai.com/v1)',
   'settings.remoteLm.apiKey': 'API key (optional)',
   'settings.remoteLm.apiKeyPlaceholder': 'sk-…',
@@ -128,6 +151,9 @@ Rules:
   'settings.remoteLm.displayAliasPlaceholder': 'External AI',
   'settings.remoteLm.displayAliasHelp':
     'Shown in the composer and messages. Leave empty to use the default label (External AI).',
+  'settings.remoteLm.supportsVision': 'Image processing',
+  'settings.remoteLm.supportsVisionHelp':
+    'Enable only if your external model supports image inputs.',
   'settings.remoteLm.modelPickerDialogTitle': 'Choose model',
   'settings.remoteLm.modelPickerDialogAria': 'Choose model',
   'settings.remoteLm.modelSearchPlaceholder': 'Filter…',
@@ -135,9 +161,16 @@ Rules:
     'No matches. Clear the filter or tap refresh to load models from the server.',
   'settings.remoteLm.modelsLoading': 'Loading models…',
   'settings.remoteLm.modelsError': 'Could not load models: {message}',
-  'settings.remoteLm.save': 'Save and connect',
+  'settings.remoteLm.configure': 'Configure external AI',
+  'settings.remoteLm.test': 'Test connection',
+  'settings.remoteLm.testing': 'Testing connection…',
+  'settings.remoteLm.testCancel': 'Cancel',
+  'settings.remoteLm.testCancelled': 'Connection test cancelled.',
+  'settings.remoteLm.testOk': 'Connection OK.',
+  'settings.remoteLm.testFail': 'Connection failed: {message}',
+  'settings.remoteLm.save': 'Save',
   'settings.remoteLm.openFromComposerHint':
-    'Open API Emulation settings to change URL, API key, or model',
+    'Open external AI settings to change URL, API key, or model',
   'settings.remoteLm.presets.open': 'Known URLs…',
   'settings.remoteLm.presets.title': 'Preset base URLs',
   'settings.remoteLm.presets.lead': 'Pick a provider; the field below is filled for you. You can still edit it before saving.',
@@ -148,8 +181,8 @@ Rules:
   'settings.remoteLm.preset.openrouter': 'OpenRouter',
   'settings.remoteLm.preset.groq': 'Groq',
   'settings.remoteLm.preset.together': 'Together AI',
-  'settings.remoteLm.saved': 'API Emulation settings saved.',
-  'settings.remoteLm.clear': 'Clear API emulation settings',
+  'settings.remoteLm.saved': 'External AI settings saved.',
+  'settings.remoteLm.clear': 'Clear external AI settings',
   'settings.remoteLm.securityHint':
     'Stored in localStorage on this device. Anyone with access to this profile or XSS on this origin could read it. Clear after use on a shared computer.',
   'settings.remoteLm.errorNeedBaseUrl': 'Enter a base URL first.',
@@ -230,6 +263,7 @@ Rules:
   'chat.summary.loading': 'Summarizing…',
   'chat.summary.empty': 'This chat has no messages to summarize yet.',
   'chat.summary.error': 'Could not generate a summary. Try again.',
+  'chat.reasoning.title': 'Reasoning',
   'chat.code.copy': 'Copy',
   'chat.code.copied': 'Copied',
   'chat.code.download': 'Download as file',
@@ -288,7 +322,7 @@ Rules:
   'chat.attach.images': 'Attach images',
   'chat.attach.filesAndImages': 'Attach files and images',
   'chat.attach.hintUnavailable':
-    'Image input requires the Prompt API multimodal flag in Chrome (see How to enable Gemini Nano).',
+    'For now, you can attach UTF-8 text files like .txt, .csv, or .md.',
   'chat.attach.removeAria': 'Remove attachment',
   'chat.internal.userAttachmentsLine': 'Attached {n} file(s): {names}',
   'chat.internal.attachmentsOnlyBody':
@@ -304,16 +338,16 @@ Rules:
   'chat.attachments.textReadFailed': 'Could not read the text file.',
   'chat.textAttachment.previewChars': '{n} characters',
   'empty.attachHint':
-    'Use the paperclip to attach images (with the multimodal Chrome flag) or UTF-8 text files such as .txt, .csv, or .md.',
+    'Use the paperclip to attach images or .txt, .csv, and .md files.',
   'chat.time.justNow': 'Just now',
   'model.fallbackShort': 'AI',
   'model.geminiNanoBrand': 'Gemini Nano',
-  'model.apiEmulationPending': 'API emulation',
+  'model.apiEmulationPending': 'External AI',
   'model.externalAiDefault': 'External AI',
   'placeholder': 'Write a message…',
   'empty.title': 'Start a conversation',
-  'empty.bodyWhere': 'Messages stay in this browser.',
-  'empty.bodyKeys': 'Use Enter to send; Shift+Enter to go to the next line.',
+  'empty.bodyWhere': '',
+  'empty.bodyKeys': 'Enter sends. Shift+Enter adds a new line.',
   'defaultChatTitle': 'New chat',
   'downloading': 'Downloading model… {pct}%',
   'waiting': 'Generating…',
@@ -349,7 +383,7 @@ const es: Dict = {
   'gate.blockedRemoteHint':
     'La URL base se normaliza para terminar en `/v1`. La API key es opcional en servidores locales; se guarda solo en el localStorage de este navegador.',
   'gate.remoteLmLegalFooter':
-    '© 2026 Pablo Medina. Minerva es código abierto bajo licencia MIT; la opción de emulación de API usa el endpoint que elijas y no cambia esos términos para el código de la app que corrés acá.',
+    '© 2026 Pablo Medina. Minerva es código abierto bajo licencia MIT; la IA externa usa el endpoint que elijas y no cambia esos términos para el código de la app que corrés acá.',
   'gate.retry': 'Volver a comprobar',
   'howToEnableLink': 'Cómo habilitar Gemini Nano',
   'howToEnableTitle': 'Habilitar Gemini Nano en Chrome',
@@ -358,7 +392,7 @@ const es: Dict = {
 ## Desarrollo local (\`localhost\`)
 
 1. Abrí \`chrome://flags/#optimization-guide-on-device-model\` — elegí **Enabled** y reiniciá Chrome si lo pide.
-2. Abrí \`chrome://flags/#prompt-api-for-gemini-nano-multimodal-input\` — elegí **Enabled** y reiniciá Chrome otra vez.
+2. Habilitá la entrada de imágenes de la Prompt API en tu versión de Chrome (el nombre del flag puede cambiar según versión/canal; si hace falta, buscá "prompt api" en \`chrome://flags\`) y reiniciá Chrome otra vez.
 
 ## Después
 
@@ -388,7 +422,30 @@ Abrí \`chrome://on-device-internals\` para ver el estado de la descarga y regis
     'Los ajustes y los chats se guardan en IndexedDB en este dispositivo. El prompt del sistema se envía al modelo cuando arranca la sesión de un chat.',
   'settings.navAria': 'Categorías de ajustes',
   'settings.sectionGeneral': 'General',
-  'settings.sectionRemoteLm': 'Emulación de API',
+  'settings.sectionRemoteLm': 'IA',
+  'settings.ai.chat': 'IA del chat',
+  'settings.ai.system': 'IA del sistema',
+  'settings.ai.none': 'Ninguna',
+  'settings.ai.searchPlaceholder': 'Buscar modelos…',
+  'settings.ai.filter': 'Filtrar modelos',
+  'settings.ai.filter.all': 'Todos',
+  'settings.ai.filter.nano': 'Nano',
+  'settings.ai.filter.external': 'Externa',
+  'settings.ai.filter.available': 'Disponibles',
+  'settings.ai.empty': 'No hay modelos que coincidan con el filtro.',
+  'settings.ai.autoAlias': 'Auto-generar alias externo',
+  'settings.ai.autoAliasHelp':
+    'Si está activado, Minerva le pide a la System AI un alias corto cuando cambiás a otro modelo externo.',
+  'settings.ai.alias': 'Alias',
+  'settings.ai.aliasPlaceholder': 'External AI',
+  'settings.ai.aliasGenerateAria': 'Generar alias con IA',
+  'settings.ai.aliasGenerating': 'Generando alias…',
+  'settings.ai.aliasGenerated': 'Alias generado.',
+  'settings.ai.aliasGenerateFailed': 'No se pudo generar el alias. Probá de nuevo.',
+  'settings.ai.aliasGenerateNoSystemAi': 'Primero seleccioná una System AI.',
+  'settings.ai.aliasGenerateBadChatModel': 'Primero elegí un modelo externo en IA del chat.',
+  'settings.window.maximize': 'Maximizar ventana',
+  'settings.window.restore': 'Restaurar ventana',
   'settings.sectionProfile': 'Perfil',
   'settings.sectionSystem': 'Prompt del sistema',
   'settings.sectionData': 'Datos',
@@ -428,12 +485,12 @@ Reglas:
   'settings.clearChatsAction': 'Borrar chats',
   'settings.clearAllDataTitle': '¿Borrar todos los datos?',
   'settings.clearAllDataBody':
-    'Se eliminan chats, mensajes y ajustes (incluido el prompt del sistema) guardados para Minerva en este navegador. También se borran la URL base de emulación de API y la API key guardadas en el localStorage de este sitio.',
+    'Se eliminan chats, mensajes y ajustes (incluido el prompt del sistema) guardados para Minerva en este navegador. También se borran la URL y la API key de IA externa guardadas para este sitio.',
   'settings.remoteLm.lead':
     'Si la Prompt API en el dispositivo (Gemini Nano) no está disponible, podés indicarle a Minerva un endpoint compatible con OpenAI en el que confíes. Los chats y adjuntos siguen en este navegador.',
   'settings.remoteLm.offlineNote':
     'Las respuestas se piden a esa URL por la red: no se garantiza que funcione sin conexión.',
-  'settings.remoteLm.baseUrl': 'Modelo remoto',
+  'settings.remoteLm.baseUrl': 'URL',
   'settings.remoteLm.baseUrlPlaceholder':
     'Usá {knownUrls}, o escribí tu URL base (ej. https://api.openai.com/v1)',
   'settings.remoteLm.apiKey': 'API key (opcional)',
@@ -451,6 +508,9 @@ Reglas:
   'settings.remoteLm.displayAliasPlaceholder': 'External AI',
   'settings.remoteLm.displayAliasHelp':
     'Se muestra en el compositor y en los mensajes. Dejalo vacío para usar la etiqueta por defecto (External AI).',
+  'settings.remoteLm.supportsVision': 'Procesamiento de imágenes',
+  'settings.remoteLm.supportsVisionHelp':
+    'Activá esta opción solo si el modelo externo soporta entrada de imágenes.',
   'settings.remoteLm.modelPickerDialogTitle': 'Elegir modelo',
   'settings.remoteLm.modelPickerDialogAria': 'Elegir modelo',
   'settings.remoteLm.modelSearchPlaceholder': 'Filtrar…',
@@ -458,9 +518,16 @@ Reglas:
     'Sin coincidencias. Borrá el filtro o tocá refrescar para cargar modelos del servidor.',
   'settings.remoteLm.modelsLoading': 'Cargando modelos…',
   'settings.remoteLm.modelsError': 'No se pudieron cargar los modelos: {message}',
-  'settings.remoteLm.save': 'Guardar y conectar',
+  'settings.remoteLm.configure': 'Configurar IA externa',
+  'settings.remoteLm.test': 'Probar conexión',
+  'settings.remoteLm.testing': 'Probando conexión…',
+  'settings.remoteLm.testCancel': 'Cancelar',
+  'settings.remoteLm.testCancelled': 'Prueba de conexión cancelada.',
+  'settings.remoteLm.testOk': 'Conexión correcta.',
+  'settings.remoteLm.testFail': 'Falló la conexión: {message}',
+  'settings.remoteLm.save': 'Guardar',
   'settings.remoteLm.openFromComposerHint':
-    'Abrir ajustes de emulación de API para cambiar la URL, la API key o el modelo',
+    'Abrir ajustes de IA externa para cambiar la URL, la API key o el modelo',
   'settings.remoteLm.presets.open': 'URLs conocidas…',
   'settings.remoteLm.presets.title': 'URLs base predefinidas',
   'settings.remoteLm.presets.lead':
@@ -472,8 +539,8 @@ Reglas:
   'settings.remoteLm.preset.openrouter': 'OpenRouter',
   'settings.remoteLm.preset.groq': 'Groq',
   'settings.remoteLm.preset.together': 'Together AI',
-  'settings.remoteLm.saved': 'Se guardó la configuración de emulación de API.',
-  'settings.remoteLm.clear': 'Borrar configuración de emulación de API',
+  'settings.remoteLm.saved': 'Se guardó la configuración de IA externa.',
+  'settings.remoteLm.clear': 'Borrar configuración de IA externa',
   'settings.remoteLm.securityHint':
     'Queda en el localStorage de este dispositivo. Quien tenga acceso a este perfil o XSS en este origen podría leerla. Borrá la configuración después de usar una computadora compartida.',
   'settings.remoteLm.errorNeedBaseUrl': 'Ingresá primero una URL base.',
@@ -555,6 +622,7 @@ Reglas:
   'chat.summary.loading': 'Resumiendo…',
   'chat.summary.empty': 'Este chat no tiene mensajes para resumir todavía.',
   'chat.summary.error': 'No se pudo generar el resumen. Probá de nuevo.',
+  'chat.reasoning.title': 'Razonamiento',
   'chat.code.copy': 'Copiar',
   'chat.code.copied': 'Copiado',
   'chat.code.download': 'Descargar como archivo',
@@ -613,16 +681,16 @@ Reglas:
   'chat.time.justNow': 'Recién',
   'model.fallbackShort': 'IA',
   'model.geminiNanoBrand': 'Gemini Nano',
-  'model.apiEmulationPending': 'Emulación de API',
+  'model.apiEmulationPending': 'IA externa',
   'model.externalAiDefault': 'External AI',
   'placeholder': 'Escribí un mensaje…',
   'empty.title': 'Empezá una conversación',
-  'empty.bodyWhere': 'Los mensajes quedan en este navegador.',
-  'empty.bodyKeys': 'Usá Intro para enviar; Mayús+Intro para avanzar a la siguiente línea.',
+  'empty.bodyWhere': '',
+  'empty.bodyKeys': 'Intro envía. Mayús+Intro agrega una línea.',
   'chat.attach.images': 'Adjuntar imágenes',
   'chat.attach.filesAndImages': 'Adjuntar archivos e imágenes',
   'chat.attach.hintUnavailable':
-    'Las imágenes requieren el flag multimodal de la Prompt API en Chrome (mirá “Cómo habilitar Gemini Nano”).',
+    'Por ahora podés adjuntar archivos de texto UTF-8 como .txt, .csv o .md.',
   'chat.attach.removeAria': 'Quitar adjunto',
   'chat.internal.userAttachmentsLine': 'Adjunté {n} archivo(s): {names}',
   'chat.internal.attachmentsOnlyBody':
@@ -638,7 +706,7 @@ Reglas:
   'chat.attachments.textReadFailed': 'No se pudo leer el archivo de texto.',
   'chat.textAttachment.previewChars': '{n} caracteres',
   'empty.attachHint':
-    'Usá el clip para adjuntar imágenes (con el flag multimodal de Chrome) o archivos de texto UTF-8 como .txt, .csv o .md.',
+    'Usá el clip para adjuntar imágenes o archivos .txt, .csv y .md.',
   'defaultChatTitle': 'Chat nuevo',
   'downloading': 'Descargando modelo… {pct}%',
   'waiting': 'Generando…',

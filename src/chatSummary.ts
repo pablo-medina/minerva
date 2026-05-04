@@ -151,7 +151,7 @@ async function summarizeWithSummarizerApi(
   }
 }
 
-function buildLanguageModelSummaryPrompt(lang: AppLang, transcript: string): string {
+export function buildLanguageModelSummaryPrompt(lang: AppLang, transcript: string): string {
   const hint = summaryLanguageHint(lang);
   return `Summarize the chat transcript below for the reader.
 

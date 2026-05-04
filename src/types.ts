@@ -49,6 +49,13 @@ export type ChatMessage = {
   attachments?: ChatAttachment[];
   /** Present on assistant messages after a completed on-device generation. */
   nanoTurnStats?: NanoTurnStats;
+  /** Optional streamed reasoning text from compatible models. */
+  reasoning?: string;
+  /**
+   * Human-facing heading for assistant bubbles (captures composer label at send time).
+   * Older persisted threads omit this field; UI falls back to turn stats model id then a neutral label.
+   */
+  assistantDisplayName?: string;
 };
 
 export type ChatSession = {
@@ -61,6 +68,35 @@ export type ChatSession = {
 };
 
 export type LocalSettings = {
+  /**
+   * Unified selection key for Chat AI:
+   * - `nano`
+   * - `openai:<model-id>`
+   * Undefined = none selected.
+   */
+  chatAiModelKey?: string;
+  /**
+   * Unified selection key for System AI:
+   * - `nano`
+   * - `openai:<model-id>`
+   * Undefined = none selected.
+   */
+  systemAiModelKey?: string;
+  /** Selected AI for the main chat. Undefined = none selected. */
+  chatAiId?: 'nano' | 'openai';
+  /** Selected AI for title/summary/refine helpers. Undefined = disabled. */
+  systemAiId?: 'nano' | 'openai';
+  /** Shared config for OpenAI-compatible providers. */
+  openAiConfig?: {
+    baseUrl: string;
+    apiKey: string;
+    modelId: string;
+    temperature: number;
+    displayAlias?: string;
+    supportsVision?: boolean;
+  };
+  /** If true, auto-generates external model alias with System AI on model change. */
+  autoAliasExternalModel: boolean;
   systemPrompt: string;
   /** How the assistant should address the user (sent with the system prompt when a session starts). */
   preferredName: string;

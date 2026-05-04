@@ -1,5 +1,3 @@
-/** Converts Prompt API shapes into OpenAI Chat Completions `messages` JSON. */
-
 type OpenAiContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } };
@@ -36,20 +34,14 @@ async function languageModelContentToOpenAi(
   for (const p of content) {
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     if (p.type === 'text') {
-      const v = p.value;
-      const text = typeof v === 'string' ? v : '';
+      const text = typeof p.value === 'string' ? p.value : '';
       if (text) parts.push({ type: 'text', text });
       continue;
     }
-    if (p.type === 'image') {
-      const src = p.value;
-      if (src instanceof ImageBitmap) {
-        const url = await imageBitmapToPngDataUrl(src);
-        parts.push({ type: 'image_url', image_url: { url } });
-      }
-      continue;
+    if (p.type === 'image' && p.value instanceof ImageBitmap) {
+      const url = await imageBitmapToPngDataUrl(p.value);
+      parts.push({ type: 'image_url', image_url: { url } });
     }
-    /* audio etc. — skip for remote polyfill */
   }
   if (parts.length === 0) return '';
   if (parts.length === 1 && parts[0]!.type === 'text') return parts[0]!.text;
@@ -71,12 +63,10 @@ export async function convertInitialPromptsToOpenAi(
     }
     if (m.role === 'assistant') {
       const c = await languageModelContentToOpenAi(m.content, signal);
-      const text = typeof c === 'string' ? c : '';
-      out.push({ role: 'assistant', content: text });
+      out.push({ role: 'assistant', content: typeof c === 'string' ? c : '' });
       continue;
     }
-    const c = await languageModelContentToOpenAi(m.content, signal);
-    out.push({ role: 'user', content: c });
+    out.push({ role: 'user', content: await languageModelContentToOpenAi(m.content, signal) });
   }
   return out;
 }
@@ -85,22 +75,19 @@ export async function convertPromptInputToOpenAiUserRows(
   input: LanguageModelPrompt,
   signal: AbortSignal,
 ): Promise<OpenAiChatRow[]> {
-  if (typeof input === 'string') {
-    return input.trim() ? [{ role: 'user', content: input }] : [];
-  }
+  if (typeof input === 'string') return input.trim() ? [{ role: 'user', content: input }] : [];
   const rows: OpenAiChatRow[] = [];
   for (const m of input) {
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     if (m.role === 'user') {
-      const c = await languageModelContentToOpenAi(m.content, signal);
-      rows.push({ role: 'user', content: c });
+      rows.push({ role: 'user', content: await languageModelContentToOpenAi(m.content, signal) });
       continue;
     }
     if (m.role === 'assistant') {
       const c = await languageModelContentToOpenAi(m.content, signal);
-      const text = typeof c === 'string' ? c : '';
-      rows.push({ role: 'assistant', content: text });
+      rows.push({ role: 'assistant', content: typeof c === 'string' ? c : '' });
     }
   }
   return rows;
 }
+

@@ -1,10 +1,23 @@
 /** Limits for image attachments in the on-device chat (aligned with typical Prompt API constraints). */
 export const MAX_CHAT_IMAGE_ATTACHMENTS = 5;
-export const MAX_CHAT_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/** Per-image size in MiB (1024² bytes). User setting is clamped to this inclusive range. */
+export const MIN_MAX_IMAGE_ATTACHMENT_MIB = 0.5;
+export const MAX_MAX_IMAGE_ATTACHMENT_MIB = 50;
+export const DEFAULT_MAX_IMAGE_ATTACHMENT_MIB = 4;
+
+/** Bytes at the default image MiB cap (for static fallbacks where settings are unavailable). */
+export const DEFAULT_MAX_IMAGE_ATTACHMENT_BYTES = Math.round(
+  DEFAULT_MAX_IMAGE_ATTACHMENT_MIB * 1024 * 1024,
+);
 
 /** Text files (UTF-8) attached to a user message; stored in IndexedDB as Blobs. */
 export const MAX_CHAT_TEXT_ATTACHMENTS = 5;
-export const MAX_CHAT_TEXT_BYTES = 512 * 1024;
+
+/** Per-file text attachment size in MiB (1024² bytes). User setting is clamped to this inclusive range. */
+export const MIN_MAX_TEXT_ATTACHMENT_MIB = 0.25;
+export const MAX_MAX_TEXT_ATTACHMENT_MIB = 200;
+export const DEFAULT_MAX_TEXT_ATTACHMENT_MIB = 5;
 
 /** Max combined image + text attachments per user message. */
 export const MAX_CHAT_ATTACHMENTS_TOTAL = 8;

@@ -13,6 +13,7 @@ import { createTranslator, detectBrowserLang } from './i18n';
 import { modelLabelForSession } from './modelLabel';
 import {
   LM_CORE,
+  isChromiumBrowser,
   languageModelEntryOk,
   languageModelImageInputSupported,
   languageModelSupported,
@@ -20,7 +21,9 @@ import {
 } from './promptApi';
 import { BackupRestoreError, downloadMinervaBackupFile, importMinervaBackupFromFile } from './backupRestore';
 import {
+  clampStreamFirstChunkTimeoutSec,
   DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
+  DEFAULT_STREAM_FIRST_CHUNK_TIMEOUT_SEC,
   deleteChatSession,
   loadActiveSessionId,
   loadAppPrefs,
@@ -54,11 +57,15 @@ import { formatBytes, estimateDataUrlBytes } from './chatExportHelpers';
 import { collectChatImagesInOrder, indexOfAttachmentInChat } from './util/collectChatImages';
 import {
   COMPOSER_FILE_INPUT_ACCEPT,
+  DEFAULT_MAX_IMAGE_ATTACHMENT_MIB,
+  DEFAULT_MAX_TEXT_ATTACHMENT_MIB,
   MAX_CHAT_ATTACHMENTS_TOTAL,
   MAX_CHAT_IMAGE_ATTACHMENTS,
-  MAX_CHAT_IMAGE_BYTES,
   MAX_CHAT_TEXT_ATTACHMENTS,
-  MAX_CHAT_TEXT_BYTES,
+  MAX_MAX_IMAGE_ATTACHMENT_MIB,
+  MAX_MAX_TEXT_ATTACHMENT_MIB,
+  MIN_MAX_IMAGE_ATTACHMENT_MIB,
+  MIN_MAX_TEXT_ATTACHMENT_MIB,
 } from './chatAttachmentConstants';
 import {
   closeImageBitmaps,
@@ -73,16 +80,33 @@ import {
   countImageAttachments,
   countTextAttachments,
   fileToTextAttachment,
-  formatTextAttachmentSizeLimitLabel,
   isSupportedTextAttachmentMime,
 } from './chatTextAttachments';
+import {
+  clampMaxImageAttachmentMib,
+  formatImageMibForField,
+  maxImageAttachmentBytesFromSettings,
+} from './imageAttachmentSettings';
+import {
+  clampMaxTextAttachmentMib,
+  formatMibForField,
+  formatTextAttachmentSizeLimitLabel,
+  maxTextAttachmentBytesFromSettings,
+  parseMibFromUserText,
+} from './textAttachmentSettings';
 import { AiActionIcon } from './components/AiActionIcon';
 import { StoragePressureBanner } from './components/StoragePressureBanner';
-import { StorageQuotaHint } from './components/StorageQuotaHint';
+import { StorageQuotaPieChart } from './components/StorageQuotaPieChart';
 import { ChatMarkdown } from './components/ChatMarkdown';
 import { DraggableDialog } from './components/DraggableDialog';
 import { MessageDialog } from './components/MessageDialog';
 import { MessageTimestamp } from './components/MessageTimestamp';
+import { EditUserMessageDialog } from './components/EditUserMessageDialog';
+import {
+  buildUserMessageDisplayContent,
+  modelPromptTextFromUserMessage,
+  userMessageEditableText,
+} from './chatUserMessageDisplay';
 
 function makeId(): string {
   try {
@@ -97,6 +121,13 @@ function makeId(): string {
 
 function isoNow(): string {
   return new Date().toISOString();
+}
+
+/** Chrome Prompt API throws `QuotaExceededError` when the combined prompt exceeds an internal limit. */
+function isBrowserPromptInputTooLargeError(e: unknown): boolean {
+  if (e instanceof DOMException && e.name === 'QuotaExceededError') return true;
+  if (e instanceof Error && /too large/i.test(e.message)) return true;
+  return false;
 }
 
 /** Desktop / fine pointer: focus the composer. Touch-primary devices: skip (avoids opening the virtual keyboard). */
@@ -153,6 +184,36 @@ function IconPaperclip({ size = 18 }: { size?: number }) {
   );
 }
 
+function IconEditMessage({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"
+      />
+    </svg>
+  );
+}
+
+function IconResendMessage({ size = 16 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M21 12a9 9 0 1 1-3-6.7M21 3v7h-7"
+      />
+    </svg>
+  );
+}
+
 /** Document with lines — distinct from generic “AI” sparkles; reads as condensed text / summary. */
 function IconChatSummary({ size = 18 }: { size?: number }) {
   return (
@@ -201,17 +262,6 @@ function IconExportChat({ size = 17 }: { size?: number }) {
   );
 }
 
-function HelpCircleIcon() {
-  return (
-    <svg className="side-icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75-.9.92c-.72.73-1.17 1.73-1.17 2.83v.5h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"
-      />
-    </svg>
-  );
-}
-
 type Gate = 'loading' | 'unsupported' | 'blocked' | 'ready';
 
 export function App() {
@@ -254,6 +304,22 @@ export function App() {
     void saveAppPrefsLang(lang);
   }, [lang]);
 
+  const howToChromeFlagsDialog = (
+    <DraggableDialog
+      open={howToOpen}
+      title={t('howToEnableTitle')}
+      closeAriaLabel={t('dialog.close')}
+      mobileBackAriaLabel={t('dialog.back')}
+      onClose={() => setHowToOpen(false)}
+      width={520}
+      variant="solid"
+    >
+      <div className="api-keys-doc-dialog">
+        <ChatMarkdown content={t('howToEnableMarkdown')} theme={theme} t={t} />
+      </div>
+    </DraggableDialog>
+  );
+
   if (gate === 'loading') {
     return (
       <div className="auth-screen">
@@ -263,14 +329,37 @@ export function App() {
   }
 
   if (gate === 'unsupported') {
+    const showChromeFlagsHowTo = isChromiumBrowser();
     return (
-      <div className="auth-screen">
-        <div className="auth-card">
-          <h1>{t('brand.name')}</h1>
-          <p>{t('gate.unsupported')}</p>
-          <p className="hint">{t('gate.unsupportedHint')}</p>
+      <>
+        <div className="auth-screen">
+          <div className="auth-card">
+            <h1>{t('brand.name')}</h1>
+            <p>{t('gate.unsupported')}</p>
+            <p className="hint">{t('gate.unsupportedHint')}</p>
+            {showChromeFlagsHowTo ? (
+              <>
+                <p className="hint gate-chrome-flags-hint">{t('gate.chromeMaybeFlagsHint')}</p>
+                <div className="minerva-how-to-wrap">
+                  <button
+                    type="button"
+                    className="minerva-how-to-link minerva-how-to-link--prominent"
+                    onClick={() => setHowToOpen(true)}
+                  >
+                    {t('howToEnableLink')}
+                  </button>
+                </div>
+                <div className="auth-card-retry-wrap">
+                  <button type="button" className="btn btn-primary" onClick={recheckGate}>
+                    {t('gate.retry')}
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
         </div>
-      </div>
+        {showChromeFlagsHowTo ? howToChromeFlagsDialog : null}
+      </>
     );
   }
 
@@ -283,28 +372,22 @@ export function App() {
             <p>{t('gate.blocked')}</p>
             <p className="hint">{t('gate.blockedHint')}</p>
             <div className="minerva-how-to-wrap">
-              <button type="button" className="minerva-how-to-link" onClick={() => setHowToOpen(true)}>
+              <button
+                type="button"
+                className="minerva-how-to-link minerva-how-to-link--prominent"
+                onClick={() => setHowToOpen(true)}
+              >
                 {t('howToEnableLink')}
               </button>
             </div>
-            <button type="button" className="btn btn-primary" style={{ marginTop: '0.75rem' }} onClick={recheckGate}>
-              {t('gate.retry')}
-            </button>
+            <div className="auth-card-retry-wrap">
+              <button type="button" className="btn btn-primary" onClick={recheckGate}>
+                {t('gate.retry')}
+              </button>
+            </div>
           </div>
         </div>
-        <DraggableDialog
-          open={howToOpen}
-          title={t('howToEnableTitle')}
-          closeAriaLabel={t('dialog.close')}
-          mobileBackAriaLabel={t('dialog.back')}
-          onClose={() => setHowToOpen(false)}
-          width={520}
-          variant="solid"
-        >
-          <div className="api-keys-doc-dialog">
-            <ChatMarkdown content={t('howToEnableMarkdown')} theme={theme} t={t} />
-          </div>
-        </DraggableDialog>
+        {howToChromeFlagsDialog}
       </>
     );
   }
@@ -328,9 +411,17 @@ type MinervaChatAppProps = {
   t: ReturnType<typeof createTranslator>;
 };
 
-type SettingsSectionId = 'general' | 'profile' | 'system' | 'data';
+type SettingsSectionId = 'general' | 'profile' | 'system' | 'data' | 'files' | 'backup' | 'about';
 
-const SETTINGS_SECTION_IDS: SettingsSectionId[] = ['general', 'profile', 'system', 'data'];
+const SETTINGS_SECTION_IDS: SettingsSectionId[] = [
+  'general',
+  'profile',
+  'system',
+  'data',
+  'files',
+  'backup',
+  'about',
+];
 
 function settingsSectionLabelKey(id: SettingsSectionId): string {
   switch (id) {
@@ -342,6 +433,12 @@ function settingsSectionLabelKey(id: SettingsSectionId): string {
       return 'settings.sectionSystem';
     case 'data':
       return 'settings.sectionData';
+    case 'files':
+      return 'settings.sectionFiles';
+    case 'backup':
+      return 'settings.sectionBackup';
+    case 'about':
+      return 'settings.sectionAbout';
     default:
       return 'settings.sectionGeneral';
   }
@@ -350,11 +447,11 @@ function settingsSectionLabelKey(id: SettingsSectionId): string {
 function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chatsOpen, setChatsOpen] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState('');
   const activeSessionIdRef = useRef(activeSessionId);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messagesRef = useRef(messages);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -363,7 +460,14 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     systemPrompt: '',
     preferredName: '',
     chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
+    maxTextAttachmentMib: DEFAULT_MAX_TEXT_ATTACHMENT_MIB,
+    maxImageAttachmentMib: DEFAULT_MAX_IMAGE_ATTACHMENT_MIB,
+    streamFirstChunkTimeoutSec: DEFAULT_STREAM_FIRST_CHUNK_TIMEOUT_SEC,
   });
+  const mibTextEditingRef = useRef(false);
+  const imageMibTextEditingRef = useRef(false);
+  const [mibText, setMibText] = useState(() => formatMibForField(DEFAULT_MAX_TEXT_ATTACHMENT_MIB));
+  const [imageMibText, setImageMibText] = useState(() => formatImageMibForField(DEFAULT_MAX_IMAGE_ATTACHMENT_MIB));
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [modelUiName, setModelUiName] = useState(() => modelLabelForSession(null, t));
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -387,6 +491,19 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [exportOpen, setExportOpen] = useState(false);
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
   const [imageViewerInitial, setImageViewerInitial] = useState(0);
+  const [editUserDialog, setEditUserDialog] = useState<{
+    idx: number;
+    initialText: string;
+    initialAttachments: ChatAttachment[];
+  } | null>(null);
+  const [truncateTailConfirmOpen, setTruncateTailConfirmOpen] = useState(false);
+  const [truncateTailPending, setTruncateTailPending] = useState<
+    | { kind: 'resend'; idx: number }
+    | { kind: 'edit'; idx: number; text: string; attachments: ChatAttachment[] }
+    | null
+  >(null);
+  const [confirmDeleteUserMessageOpen, setConfirmDeleteUserMessageOpen] = useState(false);
+  const [pendingDeleteUserMessageIdx, setPendingDeleteUserMessageIdx] = useState<number | null>(null);
 
   const nanoLmRuntimeOk = useMemo(() => languageModelSupported(), []);
 
@@ -432,6 +549,18 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   }, []);
 
   useEffect(() => {
+    if (!mibTextEditingRef.current) {
+      setMibText(formatMibForField(settingsDraft.maxTextAttachmentMib));
+    }
+  }, [settingsDraft.maxTextAttachmentMib]);
+
+  useEffect(() => {
+    if (!imageMibTextEditingRef.current) {
+      setImageMibText(formatImageMibForField(settingsDraft.maxImageAttachmentMib));
+    }
+  }, [settingsDraft.maxImageAttachmentMib]);
+
+  useEffect(() => {
     let cancelled = false;
     if (!nanoLmRuntimeOk) {
       setImageInputSupported(false);
@@ -448,6 +577,10 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   /** After the model finishes (or streaming stops), return focus to the composer on desktop. */
   useEffect(() => {
@@ -474,6 +607,11 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     setPendingAttachments([]);
     setImageViewerOpen(false);
     setExportOpen(false);
+    setEditUserDialog(null);
+    setTruncateTailConfirmOpen(false);
+    setTruncateTailPending(null);
+    setConfirmDeleteUserMessageOpen(false);
+    setPendingDeleteUserMessageIdx(null);
     return () => {
       cancelled = true;
     };
@@ -517,6 +655,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         const usesImages = threadUsesImageInputs(msgs);
         const initial = await buildSessionInitialPromptsAsync(settings, msgs, ctx, {
           attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
+          resolveUserModelText: (m) => modelPromptTextFromUserMessage(m, t),
         });
         const session = await LanguageModel.create({
           ...lmCoreForThreadUsesImages(usesImages),
@@ -572,11 +711,15 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const persistMessages = useCallback(async (sid: string, next: ChatMessage[]) => {
     await saveMessages(sid, next);
     setMessages(next);
-    setSessions((prev) =>
-      prev.map((s) =>
-        s.id === sid ? { ...s, hasUserMessage: next.some((m) => m.role === 'user') } : s,
-      ),
-    );
+    setSessions((prev) => {
+      const mapped = prev.map((s) =>
+        s.id === sid
+          ? { ...s, hasUserMessage: next.some((m) => m.role === 'user'), updatedAt: isoNow() }
+          : s,
+      );
+      void saveSessions(mapped);
+      return mapped;
+    });
   }, []);
 
   const openNewChat = useCallback(() => {
@@ -681,15 +824,19 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
             ),
           ),
         ),
+        maxTextAttachmentMib: clampMaxTextAttachmentMib(settingsDraft.maxTextAttachmentMib),
+        maxImageAttachmentMib: clampMaxImageAttachmentMib(settingsDraft.maxImageAttachmentMib),
+        streamFirstChunkTimeoutSec: clampStreamFirstChunkTimeoutSec(settingsDraft.streamFirstChunkTimeoutSec),
       };
       await saveSettings(clamped);
       setSettingsDraft(clamped);
-      setSettingsNotice(t('settings.saved'));
+      setSettingsNotice(null);
+      setSettingsOpen(false);
       lmRef.current?.destroy();
       lmRef.current = null;
       lmUsesImagesRef.current = false;
     })();
-  }, [settingsDraft, t]);
+  }, [settingsDraft]);
 
   const resetToFreshSingleChat = useCallback((): Promise<void> => {
     return (async () => {
@@ -735,6 +882,9 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         systemPrompt: '',
         preferredName: '',
         chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
+        maxTextAttachmentMib: DEFAULT_MAX_TEXT_ATTACHMENT_MIB,
+        maxImageAttachmentMib: DEFAULT_MAX_IMAGE_ATTACHMENT_MIB,
+        streamFirstChunkTimeoutSec: DEFAULT_STREAM_FIRST_CHUNK_TIMEOUT_SEC,
       };
       await saveSettings(empty);
       setSettingsDraft(empty);
@@ -832,8 +982,10 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     async (list: FileList | null) => {
       if (!list?.length || !activeSessionId || !nanoLmRuntimeOk || busy) return;
       setError(null);
-      const imgLimitLabel = formatImageSizeLimitLabel();
-      const txtLimitLabel = formatTextAttachmentSizeLimitLabel();
+      const maxImageBytes = maxImageAttachmentBytesFromSettings(settingsDraft);
+      const imgLimitLabel = formatImageSizeLimitLabel(maxImageBytes);
+      const maxTextBytes = maxTextAttachmentBytesFromSettings(settingsDraft);
+      const txtLimitLabel = formatTextAttachmentSizeLimitLabel(maxTextBytes);
       const added: ChatAttachment[] = [];
       const cur = () => [...pendingAttachments, ...added];
 
@@ -857,7 +1009,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
             setError(t('chat.attachments.maxCount').replace('{n}', String(MAX_CHAT_IMAGE_ATTACHMENTS)));
             break;
           }
-          if (file.size > MAX_CHAT_IMAGE_BYTES) {
+          if (file.size > maxImageBytes) {
             setError(
               t('chat.attachments.fileTooLarge')
                 .replace('{name}', file.name)
@@ -878,7 +1030,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
             setError(t('chat.attachments.maxText').replace('{n}', String(MAX_CHAT_TEXT_ATTACHMENTS)));
             break;
           }
-          if (file.size > MAX_CHAT_TEXT_BYTES) {
+          if (file.size > maxTextBytes) {
             setError(
               t('chat.attachments.textTooLarge')
                 .replace('{name}', file.name)
@@ -908,6 +1060,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       imageInputSupported,
       nanoLmRuntimeOk,
       pendingAttachments,
+      settingsDraft,
       t,
     ],
   );
@@ -964,6 +1117,234 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     [activeSessionId, addComposerFiles, busy, dataTransferHasFiles, nanoLmRuntimeOk],
   );
 
+  const runUserTurnStream = useCallback(
+    async (opts: {
+      sessionId: string;
+      prior: ChatMessage[];
+      userMsg: ChatMessage;
+      resetLanguageModel: boolean;
+    }) => {
+      const { sessionId, prior, userMsg, resetLanguageModel } = opts;
+      const pending = userMsg.attachments ?? [];
+      const pendingHasImages = pending.some(isChatImageAttachment);
+      const plainPromptText = userMessageEditableText(userMsg, t).trim();
+      const modelText = modelPromptTextFromUserMessage(userMsg, t);
+
+      if (resetLanguageModel) {
+        abortRef.current?.abort();
+        abortRef.current = null;
+        for (const k of [...summaryCacheRef.current.keys()]) {
+          if (k.startsWith(`${sessionId}|`)) summaryCacheRef.current.delete(k);
+        }
+        try {
+          lmRef.current?.destroy();
+        } catch {
+          /* ignore */
+        }
+        lmRef.current = null;
+        lmUsesImagesRef.current = false;
+        setModelUiName(modelLabelForSession(null, t));
+      }
+
+      const settings = await loadSettings();
+      const nextMsgs = [...prior, userMsg];
+      await persistMessages(sessionId, nextMsgs);
+
+      const assistantId = makeId();
+      const assistantShell: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        createdAt: isoNow(),
+      };
+      await persistMessages(sessionId, [...nextMsgs, assistantShell]);
+
+      const ac = new AbortController();
+      abortRef.current = ac;
+
+      const needsMm = pendingHasImages || threadUsesImageInputs(prior);
+      let partsToClose: LanguageModelMessageContent[] | null = null;
+      let timedOutBeforeFirstChunk = false;
+      let streamWatchdogTid: ReturnType<typeof window.setTimeout> | null = null;
+      const clearStreamWatchdog = () => {
+        if (streamWatchdogTid != null) {
+          window.clearTimeout(streamWatchdogTid);
+          streamWatchdogTid = null;
+        }
+      };
+
+      try {
+        if (lmRef.current && lmUsesImagesRef.current !== needsMm) {
+          try {
+            lmRef.current.destroy();
+          } catch {
+            /* ignore */
+          }
+          lmRef.current = null;
+          lmUsesImagesRef.current = false;
+        }
+
+        if (!lmRef.current) {
+          const geo = await resolveApproximateLocation(2600);
+          const ctx = defaultSessionSystemContext(lang, geo);
+          const initial = await buildSessionInitialPromptsAsync(settings, prior, ctx, {
+            attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
+            resolveUserModelText: (m) => modelPromptTextFromUserMessage(m, t),
+          });
+          const session = await LanguageModel.create({
+            ...lmCoreForThreadUsesImages(needsMm),
+            ...(initial ? { initialPrompts: initial } : {}),
+            monitor(m) {
+              m.addEventListener('downloadprogress', (ev) => {
+                const total = ev.total || 1;
+                const pct = Math.round((ev.loaded / total) * 100);
+                setDownloadPct(Number.isFinite(pct) ? pct : null);
+              });
+            },
+          });
+          lmRef.current = session;
+          lmUsesImagesRef.current = needsMm;
+          setModelUiName(modelLabelForSession(session, t));
+          setDownloadPct(null);
+        }
+        const session = lmRef.current;
+        if (!session) {
+          throw new Error('error.noLm');
+        }
+        const startedAt = performance.now();
+        let firstTokenAt: number | null = null;
+        const markFirstChunk = () => {
+          if (firstTokenAt != null) return;
+          firstTokenAt = performance.now();
+          clearStreamWatchdog();
+        };
+        let acc = '';
+        const onStreamDelta = (chunk: string) => {
+          acc += chunk;
+          setMessages((prev) => {
+            const out = prev.map((m) => (m.id === assistantId ? { ...m, content: acc } : m));
+            void saveMessages(sessionId, out);
+            return out;
+          });
+        };
+        const limitSec = settings.streamFirstChunkTimeoutSec;
+        const consumeWithFirstChunkTimeout = async (stream: ReadableStream<string>) => {
+          if (limitSec > 0) {
+            streamWatchdogTid = window.setTimeout(() => {
+              streamWatchdogTid = null;
+              if (firstTokenAt != null) return;
+              if (ac.signal.aborted) return;
+              timedOutBeforeFirstChunk = true;
+              ac.abort();
+            }, Math.round(limitSec * 1000));
+          }
+          try {
+            await consumeTextStream(stream, onStreamDelta, ac.signal, markFirstChunk);
+          } finally {
+            clearStreamWatchdog();
+          }
+        };
+        if (pending.length === 0) {
+          const stream = session.promptStreaming(plainPromptText, { signal: ac.signal });
+          await consumeWithFirstChunkTimeout(stream);
+        } else {
+          const parts = (await buildUserTurnModelParts({
+            modelText,
+            attachments: pending,
+            attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
+          })) as LanguageModelMessageContent[];
+          partsToClose = parts;
+          const stream = session.promptStreaming([{ role: 'user', content: parts }], {
+            signal: ac.signal,
+          });
+          await consumeWithFirstChunkTimeout(stream);
+        }
+        const finishedAt = performance.now();
+        const stats = buildNanoTurnStats({
+          modelId: modelLabelForSession(session, t),
+          startedAt,
+          finishedAt,
+          firstTokenAt,
+          outputText: acc,
+          contextMessages: nextMsgs,
+        });
+        const assistantFinal: ChatMessage = { ...assistantShell, content: acc, nanoTurnStats: stats };
+        setMessages((prev) => {
+          const out = prev.map((m) => (m.id === assistantId ? assistantFinal : m));
+          void saveMessages(sessionId, out);
+          return out;
+        });
+        const finalThread: ChatMessage[] = [...nextMsgs, assistantFinal];
+        const userCount = nextMsgs.filter((m) => m.role === 'user').length;
+        const interval = settings.chatTitleRefreshEveryUserMessages;
+        if (shouldRefreshChatTitle(userCount, interval)) {
+          const sid = sessionId;
+          const titleAc = new AbortController();
+          const tid = window.setTimeout(() => titleAc.abort(), 55_000);
+          void generateChatTitleWithOnDeviceModel({
+            lang,
+            messages: finalThread,
+            fallback: t('defaultChatTitle'),
+            signal: titleAc.signal,
+          })
+            .then((newTitle) => {
+              window.clearTimeout(tid);
+              if (!newTitle || sid !== activeSessionIdRef.current) return;
+              setSessions((prev) => {
+                const nextSess = prev.map((s) =>
+                  s.id === sid ? { ...s, title: newTitle, updatedAt: isoNow() } : s,
+                );
+                void saveSessions(nextSess);
+                return nextSess;
+              });
+            })
+            .catch(() => {
+              window.clearTimeout(tid);
+            });
+        }
+      } catch (e) {
+        const aborted =
+          (e instanceof DOMException && e.name === 'AbortError') ||
+          (e instanceof Error && e.name === 'AbortError');
+        if (aborted) {
+          if (timedOutBeforeFirstChunk) {
+            setError(
+              t('error.streamFirstChunkTimeout').replace('{seconds}', String(settings.streamFirstChunkTimeoutSec)),
+            );
+          }
+          setMessages((prev) => {
+            const out = prev.filter((m) => m.id !== assistantId);
+            void saveMessages(sessionId, out);
+            return out;
+          });
+        } else {
+          console.error('[Minerva] Chat stream / LanguageModel failed', e);
+          const key =
+            e instanceof Error && e.message === 'error.noLm'
+              ? 'error.noLm'
+              : isBrowserPromptInputTooLargeError(e)
+                ? 'error.promptInputTooLarge'
+                : 'error.generic';
+          setError(t(key));
+          setMessages((prev) => {
+            const out = prev.filter((m) => m.id !== assistantId);
+            void saveMessages(sessionId, out);
+            return out;
+          });
+        }
+      } finally {
+        clearStreamWatchdog();
+        if (partsToClose) {
+          closeImageBitmaps(partsToClose.filter((p) => p.type === 'image'));
+        }
+        setBusy(false);
+        abortRef.current = null;
+        setDownloadPct(null);
+      }
+    },
+    [lang, persistMessages, t],
+  );
+
   const send = useCallback(async () => {
     if (!nanoLmRuntimeOk) return;
     const text = input.trim();
@@ -978,7 +1359,6 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     setPendingAttachments([]);
     setError(null);
     setBusy(true);
-    const settings = await loadSettings();
     const userDisplay =
       text ||
       t('chat.internal.userAttachmentsLine')
@@ -992,197 +1372,125 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       ...(pending.length ? { attachments: pending } : {}),
     };
     const prior = messages;
-    const nextMsgs = [...prior, userMsg];
-    await persistMessages(activeSessionId, nextMsgs);
-    setSessions((prev) => {
-      const nextSess = prev.map((s) => {
-        if (s.id !== activeSessionId) return s;
-        return { ...s, updatedAt: isoNow(), hasUserMessage: true };
-      });
-      void saveSessions(nextSess);
-      return nextSess;
+    await runUserTurnStream({
+      sessionId: activeSessionId,
+      prior,
+      userMsg,
+      resetLanguageModel: false,
     });
-    const assistantId = makeId();
-    const assistantShell: ChatMessage = {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      createdAt: isoNow(),
-    };
-    await persistMessages(activeSessionId, [...nextMsgs, assistantShell]);
-
-    const ac = new AbortController();
-    abortRef.current = ac;
-
-    const modelText = text || t('chat.internal.attachmentsOnlyBody');
-    const needsMm = pendingHasImages || threadUsesImageInputs(prior);
-    let partsToClose: LanguageModelMessageContent[] | null = null;
-
-    try {
-      if (lmRef.current && lmUsesImagesRef.current !== needsMm) {
-        try {
-          lmRef.current.destroy();
-        } catch {
-          /* ignore */
-        }
-        lmRef.current = null;
-        lmUsesImagesRef.current = false;
-      }
-
-      if (!lmRef.current) {
-        const geo = await resolveApproximateLocation(2600);
-        const ctx = defaultSessionSystemContext(lang, geo);
-        const initial = await buildSessionInitialPromptsAsync(settings, prior, ctx, {
-          attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
-        });
-        const session = await LanguageModel.create({
-          ...lmCoreForThreadUsesImages(needsMm),
-          ...(initial ? { initialPrompts: initial } : {}),
-          monitor(m) {
-            m.addEventListener('downloadprogress', (ev) => {
-              const total = ev.total || 1;
-              const pct = Math.round((ev.loaded / total) * 100);
-              setDownloadPct(Number.isFinite(pct) ? pct : null);
-            });
-          },
-        });
-        lmRef.current = session;
-        lmUsesImagesRef.current = needsMm;
-        setModelUiName(modelLabelForSession(session, t));
-        setDownloadPct(null);
-      }
-      const session = lmRef.current;
-      if (!session) {
-        throw new Error('error.noLm');
-      }
-      const startedAt = performance.now();
-      let firstTokenAt: number | null = null;
-      const markFirstChunk = () => {
-        if (firstTokenAt == null) firstTokenAt = performance.now();
-      };
-      let acc = '';
-      if (pending.length === 0) {
-        const stream = session.promptStreaming(text, { signal: ac.signal });
-        await consumeTextStream(
-          stream,
-          (chunk) => {
-            acc += chunk;
-            setMessages((prev) => {
-              const out = prev.map((m) => (m.id === assistantId ? { ...m, content: acc } : m));
-              void saveMessages(activeSessionId, out);
-              return out;
-            });
-          },
-          ac.signal,
-          markFirstChunk,
-        );
-      } else {
-        const parts = (await buildUserTurnModelParts({
-          modelText,
-          attachments: pending,
-          attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
-        })) as LanguageModelMessageContent[];
-        partsToClose = parts;
-        const stream = session.promptStreaming([{ role: 'user', content: parts }], {
-          signal: ac.signal,
-        });
-        await consumeTextStream(
-          stream,
-          (chunk) => {
-            acc += chunk;
-            setMessages((prev) => {
-              const out = prev.map((m) => (m.id === assistantId ? { ...m, content: acc } : m));
-              void saveMessages(activeSessionId, out);
-              return out;
-            });
-          },
-          ac.signal,
-          markFirstChunk,
-        );
-      }
-      const finishedAt = performance.now();
-      const stats = buildNanoTurnStats({
-        modelId: modelLabelForSession(session, t),
-        startedAt,
-        finishedAt,
-        firstTokenAt,
-        outputText: acc,
-        contextMessages: nextMsgs,
-      });
-      const assistantFinal: ChatMessage = { ...assistantShell, content: acc, nanoTurnStats: stats };
-      setMessages((prev) => {
-        const out = prev.map((m) => (m.id === assistantId ? assistantFinal : m));
-        void saveMessages(activeSessionId, out);
-        return out;
-      });
-      const finalThread: ChatMessage[] = [...nextMsgs, assistantFinal];
-      const userCount = nextMsgs.filter((m) => m.role === 'user').length;
-      const interval = settings.chatTitleRefreshEveryUserMessages;
-      if (shouldRefreshChatTitle(userCount, interval)) {
-        const sid = activeSessionId;
-        const titleAc = new AbortController();
-        const tid = window.setTimeout(() => titleAc.abort(), 55_000);
-        void generateChatTitleWithOnDeviceModel({
-          lang,
-          messages: finalThread,
-          fallback: t('defaultChatTitle'),
-          signal: titleAc.signal,
-        })
-          .then((newTitle) => {
-            window.clearTimeout(tid);
-            if (!newTitle || sid !== activeSessionIdRef.current) return;
-            setSessions((prev) => {
-              const nextSess = prev.map((s) =>
-                s.id === sid ? { ...s, title: newTitle, updatedAt: isoNow() } : s,
-              );
-              void saveSessions(nextSess);
-              return nextSess;
-            });
-          })
-          .catch(() => {
-            window.clearTimeout(tid);
-          });
-      }
-    } catch (e) {
-      const aborted =
-        (e instanceof DOMException && e.name === 'AbortError') ||
-        (e instanceof Error && e.name === 'AbortError');
-      if (aborted) {
-        setMessages((prev) => {
-          const out = prev.filter((m) => m.id !== assistantId);
-          void saveMessages(activeSessionId, out);
-          return out;
-        });
-      } else {
-        const key =
-          e instanceof Error && e.message === 'error.noLm' ? 'error.noLm' : 'error.generic';
-        setError(t(key));
-        setMessages((prev) => {
-          const out = prev.filter((m) => m.id !== assistantId);
-          void saveMessages(activeSessionId, out);
-          return out;
-        });
-      }
-    } finally {
-      if (partsToClose) {
-        closeImageBitmaps(partsToClose.filter((p) => p.type === 'image'));
-      }
-      setBusy(false);
-      abortRef.current = null;
-      setDownloadPct(null);
-    }
   }, [
     activeSessionId,
     busy,
     imageInputSupported,
     input,
-    lang,
     messages,
     nanoLmRuntimeOk,
     pendingAttachments,
-    persistMessages,
+    runUserTurnStream,
     t,
   ]);
+
+  const closeEditUserMessage = useCallback(() => setEditUserDialog(null), []);
+
+  const openEditUserMessage = useCallback(
+    (idx: number) => {
+      const m = messagesRef.current[idx];
+      if (!m || m.role !== 'user') return;
+      const initialAttachments = [...(m.attachments ?? [])];
+      const initialText = userMessageEditableText(m, t);
+      setEditUserDialog({ idx, initialText, initialAttachments });
+    },
+    [t],
+  );
+
+  const submitEditedUserMessage = useCallback(
+    (text: string, attachments: ChatAttachment[]) => {
+      if (!editUserDialog || !activeSessionId || !nanoLmRuntimeOk) return;
+      const idx = editUserDialog.idx;
+      const pendingHasImages = attachments.some(isChatImageAttachment);
+      if (pendingHasImages && !imageInputSupported) {
+        setError(t('chat.attach.hintUnavailable'));
+        return;
+      }
+      const cur = messagesRef.current;
+      const base = cur[idx];
+      if (!base || base.role !== 'user') return;
+      const userDisplay = buildUserMessageDisplayContent(text, attachments, t);
+      const userMsg: ChatMessage = {
+        id: base.id,
+        role: 'user',
+        createdAt: base.createdAt,
+        content: userDisplay,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      };
+      const hasLater = idx < cur.length - 1;
+      if (hasLater) {
+        setTruncateTailPending({ kind: 'edit', idx, text, attachments });
+        setTruncateTailConfirmOpen(true);
+        closeEditUserMessage();
+        return;
+      }
+      closeEditUserMessage();
+      setError(null);
+      setBusy(true);
+      const prior = cur.slice(0, idx);
+      void runUserTurnStream({
+        sessionId: activeSessionId,
+        prior,
+        userMsg,
+        resetLanguageModel: true,
+      });
+    },
+    [
+      activeSessionId,
+      closeEditUserMessage,
+      editUserDialog,
+      imageInputSupported,
+      nanoLmRuntimeOk,
+      runUserTurnStream,
+      t,
+    ],
+  );
+
+  const requestDeleteUserMessage = useCallback((idx: number) => {
+    if (busy) return;
+    setPendingDeleteUserMessageIdx(idx);
+    setConfirmDeleteUserMessageOpen(true);
+  }, [busy]);
+
+  const closeDeleteUserMessageConfirm = useCallback(() => {
+    setConfirmDeleteUserMessageOpen(false);
+    setPendingDeleteUserMessageIdx(null);
+  }, []);
+
+  const resendUserMessageAt = useCallback(
+    (idx: number) => {
+      if (!nanoLmRuntimeOk || busy || !activeSessionId) return;
+      const cur = messagesRef.current;
+      const m = cur[idx];
+      if (!m || m.role !== 'user') return;
+      const pendingHasImages = (m.attachments ?? []).some(isChatImageAttachment);
+      if (pendingHasImages && !imageInputSupported) {
+        setError(t('chat.attach.hintUnavailable'));
+        return;
+      }
+      if (idx < cur.length - 1) {
+        setTruncateTailPending({ kind: 'resend', idx });
+        setTruncateTailConfirmOpen(true);
+        return;
+      }
+      setError(null);
+      setBusy(true);
+      const prior = cur.slice(0, idx);
+      void runUserTurnStream({
+        sessionId: activeSessionId,
+        prior,
+        userMsg: m,
+        resetLanguageModel: true,
+      });
+    },
+    [activeSessionId, busy, imageInputSupported, nanoLmRuntimeOk, runUserTurnStream, t],
+  );
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -1306,7 +1614,12 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         ac.signal.aborted ||
         (e instanceof DOMException && e.name === 'AbortError') ||
         (e instanceof Error && e.name === 'AbortError');
-      if (!aborted) setSettingsRefineError(t('settings.refineFailed'));
+      if (!aborted) {
+        console.error('[Minerva] System prompt refine failed', e);
+        setSettingsRefineError(
+          isBrowserPromptInputTooLargeError(e) ? t('error.promptInputTooLarge') : t('settings.refineFailed'),
+        );
+      }
     } finally {
       if (refineAbortRef.current === ac) refineAbortRef.current = null;
       session?.destroy();
@@ -1509,19 +1822,6 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
               />
             </svg>
           </button>
-          <button
-            type="button"
-            className={`side-btn${aboutOpen ? ' side-btn-active' : ''}`}
-            onClick={() => {
-              setChatsOpen(false);
-              setSettingsOpen(false);
-              setAboutOpen(true);
-            }}
-            title={t('about.open')}
-            aria-label={t('about.open')}
-          >
-            <HelpCircleIcon />
-          </button>
         </div>
       </aside>
 
@@ -1637,14 +1937,15 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                     return (
                       <div key={m.id} className="msg-stack msg-user-align">
                         <div className="msg msg-user">
-                          <div className="msg-user-topbar">
-                            <div className="msg-user-topbar-leading">
-                              <span className="msg-role">{t('chat.message.roleUser')}</span>
-                              <MessageTimestamp createdAt={m.createdAt} lang={lang} t={t} />
+                          <div className="msg-user-body">
+                            <div className="msg-user-topbar">
+                              <div className="msg-user-topbar-leading">
+                                <span className="msg-role">{t('chat.message.roleUser')}</span>
+                                <MessageTimestamp createdAt={m.createdAt} lang={lang} t={t} />
+                              </div>
                             </div>
-                          </div>
-                          {m.attachments?.length ? (
-                            <div className="msg-attachments" aria-label={t('chat.attach.filesAndImages')}>
+                            {m.attachments?.length ? (
+                              <div className="msg-attachments" aria-label={t('chat.attach.filesAndImages')}>
                               {m.attachments.map((a) =>
                                 isChatTextAttachment(a) ? (
                                   <div key={a.id} className="msg-attachment-card msg-attachment-card--text">
@@ -1670,7 +1971,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                                 ) : (
                                   <div
                                     key={a.id}
-                                    className="msg-attachment-card msg-attachment-card-clickable"
+                                    className="msg-attachment-card msg-attachment-card-clickable msg-attachment-card--image-row"
                                     role="button"
                                     tabIndex={0}
                                     title={t('chat.imageViewer.open')}
@@ -1683,25 +1984,66 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                                       }
                                     }}
                                   >
-                                    <img
-                                      src={a.dataUrl}
-                                      alt=""
-                                      className="msg-attachment-image"
-                                      draggable={false}
-                                    />
-                                    <div className="msg-attachment-meta">
-                                      <strong title={a.name}>{a.name}</strong>
-                                      <small>
-                                        {(a.mime || '').trim() || t('chat.imageViewer.mimeUnknown')} ·{' '}
-                                        {formatBytes(estimateDataUrlBytes(a.dataUrl))}
-                                      </small>
+                                    <div className="msg-attachment-card-image-head">
+                                      <img
+                                        src={a.dataUrl}
+                                        alt=""
+                                        className="msg-attachment-thumb-inline"
+                                        draggable={false}
+                                      />
+                                      <div className="msg-attachment-meta">
+                                        <strong title={a.name}>{a.name}</strong>
+                                        <small>
+                                          {(a.mime || '').trim() || t('chat.imageViewer.mimeUnknown')} ·{' '}
+                                          {formatBytes(estimateDataUrlBytes(a.dataUrl))}
+                                        </small>
+                                      </div>
                                     </div>
                                   </div>
                                 ),
                               )}
-                            </div>
-                          ) : null}
-                          {m.content.trim() ? <div className="msg-body">{m.content}</div> : null}
+                              </div>
+                            ) : null}
+                            {m.content.trim() ? <div className="msg-body">{m.content}</div> : null}
+                          </div>
+                          <div
+                            className="msg-user-toolbar"
+                            role="toolbar"
+                            aria-label={t('chat.userMessage.toolbarAria')}
+                          >
+                            <button
+                              type="button"
+                              className="msg-user-action-btn"
+                              disabled={!nanoLmRuntimeOk || busy}
+                              title={t('chat.userMessage.edit')}
+                              aria-label={t('chat.userMessage.edit')}
+                              onClick={() => openEditUserMessage(i)}
+                            >
+                              <IconEditMessage />
+                            </button>
+                            <button
+                              type="button"
+                              className="msg-user-action-btn"
+                              disabled={!nanoLmRuntimeOk || busy}
+                              title={t('chat.userMessage.resend')}
+                              aria-label={t('chat.userMessage.resend')}
+                              onClick={() => resendUserMessageAt(i)}
+                            >
+                              <IconResendMessage />
+                            </button>
+                            <button
+                              type="button"
+                              className="msg-user-close"
+                              disabled={busy}
+                              title={t('chat.userMessage.deleteTitle')}
+                              aria-label={t('chat.userMessage.deleteTitle')}
+                              onClick={() => requestDeleteUserMessage(i)}
+                            >
+                              <span className="msg-user-close-x" aria-hidden>
+                                ×
+                              </span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );
@@ -1982,7 +2324,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
               aria-labelledby={`settings-tab-${settingsSection}`}
             >
               {settingsSection === 'general' ? (
-                <>
+                <div className="settings-general-stack">
                   <h3 className="settings-vscode-pane-title">{t('settings.sectionGeneral')}</h3>
                   <div className="field">
                     <label htmlFor="minerva-lang">{t('settings.language')}</label>
@@ -2036,7 +2378,30 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                     />
                     <p className="hint">{t('settings.chatTitleIntervalHelp')}</p>
                   </div>
-                </>
+                  <div className="field">
+                    <label htmlFor="minerva-stream-first-timeout">{t('settings.streamFirstChunkTimeout')}</label>
+                    <input
+                      id="minerva-stream-first-timeout"
+                      type="number"
+                      min={0}
+                      max={600}
+                      step={1}
+                      value={settingsDraft.streamFirstChunkTimeoutSec}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const v = raw === '' ? 0 : parseInt(raw, 10);
+                        if (!Number.isFinite(v)) return;
+                        setSettingsDraft((d) => ({
+                          ...d,
+                          streamFirstChunkTimeoutSec: v,
+                        }));
+                        setSettingsNotice(null);
+                        setSettingsRefineError(null);
+                      }}
+                    />
+                    <p className="hint">{t('settings.streamFirstChunkTimeoutHelp')}</p>
+                  </div>
+                </div>
               ) : null}
               {settingsSection === 'profile' ? (
                 <>
@@ -2096,7 +2461,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
               {settingsSection === 'data' ? (
                 <div id="settings-pane-data">
                   <h3 className="settings-vscode-pane-title">{t('settings.sectionData')}</h3>
-                  <StorageQuotaHint t={t} />
+                  <StorageQuotaPieChart t={t} />
                   <div className="field">
                     <p className="hint">{t('settings.pruneOldestChatsHelp')}</p>
                     <button
@@ -2108,6 +2473,170 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                       {t('settings.pruneOldestChats')}
                     </button>
                   </div>
+                  <div className="user-settings-privacy-danger-zone">
+                    <button
+                      type="button"
+                      className="btn btn-ghost admin-danger"
+                      disabled={busy || backupBusy}
+                      onClick={() => setConfirmClearChatsOpen(true)}
+                    >
+                      {t('settings.clearChats')}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost admin-danger"
+                      disabled={busy || backupBusy}
+                      onClick={() => setConfirmClearAllDataOpen(true)}
+                    >
+                      {t('settings.clearAllData')}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {settingsSection === 'files' ? (
+                <div id="settings-pane-files">
+                  <h3 className="settings-vscode-pane-title">{t('settings.sectionFiles')}</h3>
+                  <div className="field">
+                    <label htmlFor="minerva-max-text-mib-slider">{t('settings.maxTextAttachmentMib')}</label>
+                    <div className="settings-mib-control-row">
+                      <input
+                        id="minerva-max-text-mib-slider"
+                        type="range"
+                        min={MIN_MAX_TEXT_ATTACHMENT_MIB}
+                        max={MAX_MAX_TEXT_ATTACHMENT_MIB}
+                        step={0.25}
+                        value={settingsDraft.maxTextAttachmentMib}
+                        aria-valuemin={MIN_MAX_TEXT_ATTACHMENT_MIB}
+                        aria-valuemax={MAX_MAX_TEXT_ATTACHMENT_MIB}
+                        aria-valuenow={settingsDraft.maxTextAttachmentMib}
+                        aria-valuetext={`${formatMibForField(settingsDraft.maxTextAttachmentMib)} MiB`}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          const clamped = clampMaxTextAttachmentMib(v);
+                          setSettingsDraft((d) => ({ ...d, maxTextAttachmentMib: clamped }));
+                          setSettingsNotice(null);
+                          setSettingsRefineError(null);
+                          if (!mibTextEditingRef.current) {
+                            setMibText(formatMibForField(clamped));
+                          }
+                        }}
+                      />
+                      <div className="settings-mib-numeric-with-unit">
+                        <input
+                          id="minerva-max-text-mib"
+                          type="text"
+                          inputMode="decimal"
+                          className="settings-mib-text-input"
+                          aria-label={t('settings.maxTextAttachmentMibTextAria')}
+                          value={mibText}
+                          onFocus={() => {
+                            mibTextEditingRef.current = true;
+                          }}
+                          onChange={(e) => {
+                            setMibText(e.target.value);
+                          }}
+                          onBlur={() => {
+                            mibTextEditingRef.current = false;
+                            const parsed = parseMibFromUserText(mibText);
+                            const next =
+                              parsed != null
+                                ? clampMaxTextAttachmentMib(parsed)
+                                : settingsDraft.maxTextAttachmentMib;
+                            setSettingsDraft((d) => ({ ...d, maxTextAttachmentMib: next }));
+                            setMibText(formatMibForField(next));
+                            setSettingsNotice(null);
+                            setSettingsRefineError(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              (e.target as HTMLInputElement).blur();
+                            }
+                          }}
+                        />
+                        <span className="settings-mib-unit" aria-hidden="true">
+                          MiB
+                        </span>
+                      </div>
+                    </div>
+                    <p className="hint">
+                      {t('settings.maxTextAttachmentMibHelp')
+                        .replace('{minMib}', String(MIN_MAX_TEXT_ATTACHMENT_MIB))
+                        .replace('{maxMib}', String(MAX_MAX_TEXT_ATTACHMENT_MIB))}
+                    </p>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="minerva-max-image-mib-slider">{t('settings.maxImageAttachmentMib')}</label>
+                    <div className="settings-mib-control-row">
+                      <input
+                        id="minerva-max-image-mib-slider"
+                        type="range"
+                        min={MIN_MAX_IMAGE_ATTACHMENT_MIB}
+                        max={MAX_MAX_IMAGE_ATTACHMENT_MIB}
+                        step={0.25}
+                        value={settingsDraft.maxImageAttachmentMib}
+                        aria-valuemin={MIN_MAX_IMAGE_ATTACHMENT_MIB}
+                        aria-valuemax={MAX_MAX_IMAGE_ATTACHMENT_MIB}
+                        aria-valuenow={settingsDraft.maxImageAttachmentMib}
+                        aria-valuetext={`${formatImageMibForField(settingsDraft.maxImageAttachmentMib)} MiB`}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          const clamped = clampMaxImageAttachmentMib(v);
+                          setSettingsDraft((d) => ({ ...d, maxImageAttachmentMib: clamped }));
+                          setSettingsNotice(null);
+                          setSettingsRefineError(null);
+                          if (!imageMibTextEditingRef.current) {
+                            setImageMibText(formatImageMibForField(clamped));
+                          }
+                        }}
+                      />
+                      <div className="settings-mib-numeric-with-unit">
+                        <input
+                          id="minerva-max-image-mib"
+                          type="text"
+                          inputMode="decimal"
+                          className="settings-mib-text-input"
+                          aria-label={t('settings.maxImageAttachmentMibTextAria')}
+                          value={imageMibText}
+                          onFocus={() => {
+                            imageMibTextEditingRef.current = true;
+                          }}
+                          onChange={(e) => {
+                            setImageMibText(e.target.value);
+                          }}
+                          onBlur={() => {
+                            imageMibTextEditingRef.current = false;
+                            const parsed = parseMibFromUserText(imageMibText);
+                            const next =
+                              parsed != null
+                                ? clampMaxImageAttachmentMib(parsed)
+                                : settingsDraft.maxImageAttachmentMib;
+                            setSettingsDraft((d) => ({ ...d, maxImageAttachmentMib: next }));
+                            setImageMibText(formatImageMibForField(next));
+                            setSettingsNotice(null);
+                            setSettingsRefineError(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              (e.target as HTMLInputElement).blur();
+                            }
+                          }}
+                        />
+                        <span className="settings-mib-unit" aria-hidden="true">
+                          MiB
+                        </span>
+                      </div>
+                    </div>
+                    <p className="hint">
+                      {t('settings.maxImageAttachmentMibHelp')
+                        .replace('{minMib}', String(MIN_MAX_IMAGE_ATTACHMENT_MIB))
+                        .replace('{maxMib}', String(MAX_MAX_IMAGE_ATTACHMENT_MIB))}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+              {settingsSection === 'backup' ? (
+                <div id="settings-pane-backup">
+                  <h3 className="settings-vscode-pane-title">{t('settings.sectionBackup')}</h3>
                   <div className="field settings-backup-block">
                     <p className="hint">{t('settings.backup.lead')}</p>
                     <div className="settings-backup-actions">
@@ -2129,39 +2658,23 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                       </button>
                     </div>
                     <p className="hint">{t('settings.backup.restoreHint')}</p>
-                    <input
-                      ref={backupRestoreInputRef}
-                      type="file"
-                      accept="application/json,.json"
-                      aria-hidden
-                      tabIndex={-1}
-                      style={{
-                        position: 'absolute',
-                        width: 0,
-                        height: 0,
-                        opacity: 0,
-                        overflow: 'hidden',
-                      }}
-                      onChange={onBackupRestoreFileChange}
-                    />
                   </div>
-                  <div className="user-settings-privacy-danger-zone">
-                    <button
-                      type="button"
-                      className="btn btn-ghost admin-danger"
-                      disabled={busy || backupBusy}
-                      onClick={() => setConfirmClearChatsOpen(true)}
-                    >
-                      {t('settings.clearChats')}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost admin-danger"
-                      disabled={busy || backupBusy}
-                      onClick={() => setConfirmClearAllDataOpen(true)}
-                    >
-                      {t('settings.clearAllData')}
-                    </button>
+                </div>
+              ) : null}
+              {settingsSection === 'about' ? (
+                <div id="settings-pane-about" className="settings-about-pane">
+                  <h3 className="settings-vscode-pane-title">{t('settings.sectionAbout')}</h3>
+                  <div className="about-dialog settings-about-inner">
+                    <p className="about-dialog-lead">{t('brand.name')}</p>
+                    <p className="hint about-dialog-desc">{t('about.lead')}</p>
+                    <dl className="about-dialog-dl">
+                      <dt>{t('about.author')}</dt>
+                      <dd>Pablo Medina</dd>
+                      <dt>{t('about.license')}</dt>
+                      <dd>MIT</dd>
+                    </dl>
+                    <p className="hint about-dialog-mit">{t('about.mitNotice')}</p>
+                    <p className="about-dialog-copy">{t('about.copyright')}</p>
                   </div>
                 </div>
               ) : null}
@@ -2240,6 +2753,127 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         cancelLabel={t('dialog.back')}
       />
 
+      <MessageDialog
+        open={truncateTailConfirmOpen}
+        variant="warning"
+        title={t('chat.userMessage.truncateConfirmTitle')}
+        message={t('chat.userMessage.truncateConfirmBody')}
+        closeAriaLabel={t('dialog.close')}
+        onClose={() => {
+          setTruncateTailConfirmOpen(false);
+          setTruncateTailPending(null);
+        }}
+        onConfirm={() => {
+          const p = truncateTailPending;
+          setTruncateTailPending(null);
+          setTruncateTailConfirmOpen(false);
+          if (!p || !activeSessionId) return;
+          void (async () => {
+            setError(null);
+            setBusy(true);
+            const cur = messagesRef.current;
+            if (p.kind === 'resend') {
+              const base = cur[p.idx];
+              if (!base || base.role !== 'user') {
+                setBusy(false);
+                return;
+              }
+              const prior = cur.slice(0, p.idx);
+              await runUserTurnStream({
+                sessionId: activeSessionId,
+                prior,
+                userMsg: base,
+                resetLanguageModel: true,
+              });
+              return;
+            }
+            const base = cur[p.idx];
+            if (!base || base.role !== 'user') {
+              setBusy(false);
+              return;
+            }
+            const userDisplay = buildUserMessageDisplayContent(p.text, p.attachments, t);
+            const userMsg: ChatMessage = {
+              id: base.id,
+              role: 'user',
+              createdAt: base.createdAt,
+              content: userDisplay,
+              ...(p.attachments.length > 0 ? { attachments: p.attachments } : {}),
+            };
+            const prior = cur.slice(0, p.idx);
+            await runUserTurnStream({
+              sessionId: activeSessionId,
+              prior,
+              userMsg,
+              resetLanguageModel: true,
+            });
+          })();
+        }}
+        confirmLabel={t('chat.userMessage.truncateConfirmAction')}
+        cancelLabel={t('dialog.back')}
+      />
+
+      <MessageDialog
+        open={confirmDeleteUserMessageOpen}
+        variant="warning"
+        title={t('chat.userMessage.deleteConfirmTitle')}
+        message={
+          pendingDeleteUserMessageIdx != null && pendingDeleteUserMessageIdx < messages.length - 1
+            ? t('chat.userMessage.deleteConfirmBodyWithFollowing')
+            : t('chat.userMessage.deleteConfirmBodyOnly')
+        }
+        closeAriaLabel={t('dialog.close')}
+        onClose={closeDeleteUserMessageConfirm}
+        onConfirm={() => {
+          const idx = pendingDeleteUserMessageIdx;
+          setConfirmDeleteUserMessageOpen(false);
+          setPendingDeleteUserMessageIdx(null);
+          if (idx == null || !activeSessionId) return;
+          const sid = activeSessionId;
+          const next = messagesRef.current.slice(0, idx);
+          void (async () => {
+            abortRef.current?.abort();
+            abortRef.current = null;
+            for (const k of [...summaryCacheRef.current.keys()]) {
+              if (k.startsWith(`${sid}|`)) summaryCacheRef.current.delete(k);
+            }
+            try {
+              lmRef.current?.destroy();
+            } catch {
+              /* ignore */
+            }
+            lmRef.current = null;
+            lmUsesImagesRef.current = false;
+            setModelUiName(modelLabelForSession(null, t));
+            setBusy(false);
+            setError(null);
+            await persistMessages(sid, next);
+          })();
+        }}
+        confirmLabel={t('chat.userMessage.deleteConfirmAction')}
+        cancelLabel={t('dialog.back')}
+      />
+
+      {editUserDialog ? (
+        <EditUserMessageDialog
+          open
+          title={t('chat.editUserMessage.title')}
+          initialText={editUserDialog.initialText}
+          initialAttachments={editUserDialog.initialAttachments}
+          onClose={closeEditUserMessage}
+          onSave={submitEditedUserMessage}
+          canSave={!busy && Boolean(activeSessionId) && nanoLmRuntimeOk}
+          emptyError={t('chat.editUserMessage.empty')}
+          placeholder={t('placeholder')}
+          closeAriaLabel={t('dialog.close')}
+          mobileBackAriaLabel={t('dialog.back')}
+          saveLabel={t('chat.editUserMessage.save')}
+          cancelLabel={t('dialog.back')}
+          attachmentsGroupAria={t('chat.attach.filesAndImages')}
+          removeAttachmentAria={t('chat.attach.removeAria')}
+        />
+      ) : null}
+
       <ChatExportDialog
         open={exportOpen}
         onClose={() => setExportOpen(false)}
@@ -2261,29 +2895,21 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         />
       ) : null}
 
-      <DraggableDialog
-        open={aboutOpen}
-        title={t('about.title')}
-        closeAriaLabel={t('dialog.close')}
-        mobileBackAriaLabel={t('dialog.back')}
-        onClose={() => setAboutOpen(false)}
-        width={420}
-        variant="solid"
-      >
-        <div className="about-dialog">
-          <p className="about-dialog-lead">{t('brand.name')}</p>
-          <p className="hint about-dialog-desc">{t('about.lead')}</p>
-          <dl className="about-dialog-dl">
-            <dt>{t('about.author')}</dt>
-            <dd>Pablo Medina</dd>
-            <dt>{t('about.license')}</dt>
-            <dd>MIT</dd>
-          </dl>
-          <p className="hint about-dialog-mit">{t('about.mitNotice')}</p>
-          <p className="about-dialog-copy">{t('about.copyright')}</p>
-        </div>
-      </DraggableDialog>
-
+      <input
+        ref={backupRestoreInputRef}
+        type="file"
+        accept="application/json,.json"
+        aria-hidden
+        tabIndex={-1}
+        style={{
+          position: 'absolute',
+          width: 0,
+          height: 0,
+          opacity: 0,
+          overflow: 'hidden',
+        }}
+        onChange={onBackupRestoreFileChange}
+      />
       <StoragePressureBanner t={t} onOpenDataSettings={openDataSettingsFromBanner} />
     </div>
   );

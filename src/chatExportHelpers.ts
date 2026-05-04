@@ -3,8 +3,8 @@ import type { Translator } from './i18n';
 
 export function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KiB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 /** Approximate decoded byte length of a data URL payload (base64). */

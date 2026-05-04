@@ -1,15 +1,9 @@
-import { MAX_CHAT_TEXT_BYTES } from './chatAttachmentConstants';
 import { isChatImageAttachment, isChatTextAttachment, type ChatAttachment, type ChatTextAttachment } from './types';
 
 const TEXT_EXT_RE = /\.(txt|csv|tsv|md|markdown|json|log|xml|yaml|yml|toml|ini|env|sql|sh|bat|ps1|py|js|ts|tsx|jsx|c|h|cpp|hpp|java|go|rs|rb|php|html|htm|css|scss|less|vue|svelte)$/i;
 
 const TEXT_MIME_RE =
   /^(text\/(plain|csv|tab-separated-values|html|css|javascript|typescript|markdown|xml|yaml|x-yaml)|application\/(json|xml|x-yaml|yaml|toml|sql|javascript|typescript\+json|ld\+json))$/i;
-
-export function formatTextAttachmentSizeLimitLabel(): string {
-  const mb = MAX_CHAT_TEXT_BYTES / (1024 * 1024);
-  return mb >= 1 ? `${Math.round(mb)} MB` : `${Math.round(MAX_CHAT_TEXT_BYTES / 1024)} KB`;
-}
 
 export function isSupportedTextAttachmentMime(mime: string, fileName: string): boolean {
   const m = mime.trim().toLowerCase();

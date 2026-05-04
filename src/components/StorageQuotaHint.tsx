@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { Translator } from '../i18n';
-import { getOriginStorageQuotaMb } from '../storageEstimate';
+import { getOriginStorageQuotaMib } from '../storageEstimate';
 
 const REFRESH_MS = 5000;
 
@@ -10,18 +10,18 @@ type Props = {
 };
 
 export function StorageQuotaHint({ t }: Props) {
-  const [q, setQ] = useState<Awaited<ReturnType<typeof getOriginStorageQuotaMb>> | null>(null);
+  const [q, setQ] = useState<Awaited<ReturnType<typeof getOriginStorageQuotaMib>> | null>(null);
 
   useEffect(() => {
     const tick = () => {
-      void getOriginStorageQuotaMb().then(setQ);
+      void getOriginStorageQuotaMib().then(setQ);
     };
     tick();
     const id = window.setInterval(tick, REFRESH_MS);
     return () => window.clearInterval(id);
   }, []);
 
-  if (!q || (q.quotaMb === 0 && q.usedMb === 0 && q.freeMb === 0)) {
+  if (!q || (q.quotaMib === 0 && q.usedMib === 0 && q.freeMib === 0)) {
     const title = t('settings.storageQuotaUnavailableTitle');
     return (
       <p className="hint settings-storage-quota" title={title} aria-label={title}>
@@ -31,14 +31,14 @@ export function StorageQuotaHint({ t }: Props) {
   }
 
   const title = t('settings.storageQuotaTitle')
-    .replace('{quota}', String(q.quotaMb))
-    .replace('{used}', String(q.usedMb))
-    .replace('{free}', String(q.freeMb));
+    .replace('{quota}', String(q.quotaMib))
+    .replace('{used}', String(q.usedMib))
+    .replace('{free}', String(q.freeMib));
 
   const line = t('settings.storageQuotaLine')
-    .replace('{quota}', String(q.quotaMb))
-    .replace('{used}', String(q.usedMb))
-    .replace('{free}', String(q.freeMb));
+    .replace('{quota}', String(q.quotaMib))
+    .replace('{used}', String(q.usedMib))
+    .replace('{free}', String(q.freeMib));
 
   return (
     <p className="hint settings-storage-quota" title={title} aria-label={title}>

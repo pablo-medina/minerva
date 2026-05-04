@@ -1,16 +1,15 @@
-import { MAX_CHAT_IMAGE_BYTES } from './chatAttachmentConstants';
 import type { ChatImageAttachment, ChatMessage } from './types';
 import { isChatImageAttachment } from './types';
 
-export function formatImageSizeLimitLabel(): string {
-  return formatBytes(MAX_CHAT_IMAGE_BYTES);
+export function formatImageSizeLimitLabel(maxBytes: number): string {
+  return formatBytes(maxBytes);
 }
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  const mb = n / (1024 * 1024);
-  return mb >= 10 ? `${Math.round(mb)} MB` : `${Math.round(mb * 10) / 10} MB`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KiB`;
+  const mib = n / (1024 * 1024);
+  return mib >= 10 ? `${Math.round(mib)} MiB` : `${Math.round(mib * 10) / 10} MiB`;
 }
 
 const IMAGE_MIME_RE = /^image\/(png|jpeg|jpe|jpg|webp|gif)$/i;

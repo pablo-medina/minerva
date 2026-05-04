@@ -109,6 +109,11 @@ export function buildSessionSystemContent(settings: LocalSettings, ctx: SessionS
 export type BuildSessionInitialPromptsOptions = {
   /** Shown as the text part when a historical user turn has images but empty text (model input). */
   attachmentsOnlyPrompt: string;
+  /**
+   * When set, used as the text part for user turns that include attachments (so stored bubble text
+   * like “Attached n files…” is not sent to the model). Falls back to `message.content`.
+   */
+  resolveUserModelText?: (m: ChatMessage) => string;
 };
 
 export async function buildSessionInitialPromptsAsync(
@@ -139,8 +144,9 @@ export async function buildSessionInitialPromptsAsync(
         out.push({ role: 'user', content: m.content });
         continue;
       }
+      const modelText = opts.resolveUserModelText?.(m) ?? m.content;
       const parts = (await buildUserTurnModelParts({
-        modelText: m.content,
+        modelText,
         attachments: atts,
         attachmentsOnlyPrompt: opts.attachmentsOnlyPrompt,
       })) as LanguageModelMessageContent[];

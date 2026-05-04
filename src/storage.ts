@@ -1,6 +1,9 @@
+import { DEFAULT_MAX_IMAGE_ATTACHMENT_MIB, DEFAULT_MAX_TEXT_ATTACHMENT_MIB } from './chatAttachmentConstants';
 import { detectBrowserLang } from './i18n';
 import type { AppLang, ChatAttachment, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
 import { isChatTextAttachment } from './types';
+import { normalizeMaxImageAttachmentMibFromStored } from './imageAttachmentSettings';
+import { normalizeMaxTextAttachmentMibFromStored } from './textAttachmentSettings';
 import {
   ensureDbReady,
   getDb,
@@ -8,7 +11,7 @@ import {
   type ChatThreadRecord,
   type PersistedChatMessage,
 } from './db';
-import { getOriginStorageQuotaMb } from './storageEstimate';
+import { getOriginStorageQuotaMib } from './storageEstimate';
 
 export function parseNanoTurnStats(raw: unknown): import('./types').NanoTurnStats | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
@@ -46,11 +49,28 @@ export function parseNanoTurnStats(raw: unknown): import('./types').NanoTurnStat
 
 export const DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES = 8;
 
+/** Seconds to wait for the first streamed chunk after the session is ready (default 15; 0 = off). */
+export const DEFAULT_STREAM_FIRST_CHUNK_TIMEOUT_SEC = 15;
+
 const defaultSettings = (): LocalSettings => ({
   systemPrompt: '',
   preferredName: '',
   chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
+  maxTextAttachmentMib: DEFAULT_MAX_TEXT_ATTACHMENT_MIB,
+  maxImageAttachmentMib: DEFAULT_MAX_IMAGE_ATTACHMENT_MIB,
+  streamFirstChunkTimeoutSec: DEFAULT_STREAM_FIRST_CHUNK_TIMEOUT_SEC,
 });
+
+/** Normalizes stored or user-entered seconds (0 = disabled; otherwise clamped 1–600). */
+export function clampStreamFirstChunkTimeoutSec(raw: unknown): number {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const v = Math.round(raw);
+    if (v === 0) return 0;
+    if (v < 0) return DEFAULT_STREAM_FIRST_CHUNK_TIMEOUT_SEC;
+    return Math.min(600, Math.max(1, v));
+  }
+  return DEFAULT_STREAM_FIRST_CHUNK_TIMEOUT_SEC;
+}
 
 function clampTitleInterval(n: unknown): number {
   if (typeof n === 'number' && Number.isFinite(n)) {
@@ -81,6 +101,11 @@ export function normalizeAppSettingsRow(row: AppSettingsRow | null | undefined):
         typeof row.localSettings?.preferredName === 'string' ? row.localSettings.preferredName : '',
       chatTitleRefreshEveryUserMessages: clampTitleInterval(
         row.localSettings?.chatTitleRefreshEveryUserMessages,
+      ),
+      maxTextAttachmentMib: normalizeMaxTextAttachmentMibFromStored(row.localSettings),
+      maxImageAttachmentMib: normalizeMaxImageAttachmentMibFromStored(row.localSettings),
+      streamFirstChunkTimeoutSec: clampStreamFirstChunkTimeoutSec(
+        row.localSettings?.streamFirstChunkTimeoutSec,
       ),
     },
     lang: row.lang === 'es' || row.lang === 'es-AR' || row.lang === 'en' ? row.lang : 'en',
@@ -364,9 +389,9 @@ export async function pruneOldestChatSessionsExcludingActive(
   const active = activeSessionId.trim();
 
   for (let guard = 0; guard < 400; guard++) {
-    const q = await getOriginStorageQuotaMb();
-    if (q.quotaMb <= 0) break;
-    const ratio = q.usedMb / q.quotaMb;
+    const q = await getOriginStorageQuotaMib();
+    if (q.quotaMib <= 0) break;
+    const ratio = q.usedMib / q.quotaMib;
     if (ratio < target) break;
 
     const sessions = await loadSessions();

@@ -70,4 +70,20 @@ export type LocalSettings = {
    * If 0, only the first automatic title is generated.
    */
   chatTitleRefreshEveryUserMessages: number;
+  /**
+   * Maximum size of one UTF-8 text attachment in the composer, in MiB (1024² bytes).
+   * Clamped when loaded or saved; bounds live in `chatAttachmentConstants.ts`.
+   */
+  maxTextAttachmentMib: number;
+  /**
+   * Maximum size of one image attachment in the composer, in MiB (1024² bytes).
+   * Clamped when loaded or saved; bounds live in `chatAttachmentConstants.ts`.
+   */
+  maxImageAttachmentMib: number;
+  /**
+   * If greater than 0, aborts the chat request when no streamed output has arrived
+   * within this many seconds after the model session is ready (does not include
+   * model download / `LanguageModel.create()` time). Set to 0 to disable.
+   */
+  streamFirstChunkTimeoutSec: number;
 };

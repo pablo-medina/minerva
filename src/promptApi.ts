@@ -40,6 +40,23 @@ export function languageModelSupported(): boolean {
   }
 }
 
+/**
+ * True for Chromium-based desktop browsers where on-device Prompt API flags may apply
+ * (Chrome, Edge, etc.). Not a guarantee the API exists — use with `languageModelSupported()`.
+ */
+export function isChromiumBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  if (/Firefox\//i.test(ua)) return false;
+  const brands = (navigator as Navigator & { userAgentData?: { brands?: { brand: string }[] } }).userAgentData?.brands;
+  if (brands?.length) {
+    return brands.some((b) =>
+      /Chromium|Google Chrome|Microsoft Edge|Opera|Brave/i.test(b.brand),
+    );
+  }
+  return /Chrome\/|Chromium\/|Edg\/|CriOS\//i.test(ua);
+}
+
 export async function languageModelAvailability(): Promise<Availability> {
   if (!languageModelSupported()) return 'unavailable';
   try {

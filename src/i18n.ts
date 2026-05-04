@@ -4,8 +4,6 @@ type Dict = Record<string, string>;
 
 const en: Dict = {
   'brand.name': 'Minerva',
-  'about.title': 'About Minerva',
-  'about.open': 'About Minerva',
   'about.lead': 'Chat in your browser. No server, no account.',
   'about.author': 'Author',
   'about.license': 'License',
@@ -17,6 +15,8 @@ const en: Dict = {
   'gate.unsupported': 'This browser does not expose the Prompt API',
   'gate.unsupportedHint':
     'Use a compatible version of Chrome with on-device AI enabled, or open this app from localhost as documented by Google.',
+  'gate.chromeMaybeFlagsHint':
+    'On Google Chrome and similar Chromium builds, the Prompt API usually appears only after you enable the on-device model flags and restart the browser.',
   'gate.blocked': 'Gemini Nano is not available yet',
   'gate.blockedHint':
     'The API is present but the model is unavailable. Enable the required flags, restart Chrome, and try again.',
@@ -52,6 +52,9 @@ Open \`chrome://on-device-internals\` for download status and logs.`,
   'settings.chatTitleInterval': 'Auto-rename chats (user messages)',
   'settings.chatTitleIntervalHelp':
     'After your first message and the assistant reply, Minerva asks the on-device model for a short sidebar title. If this number is greater than 0, it asks again every that many user messages (for example 10 → after user messages 1, 11, 21…). Use 0 for only the first automatic title.',
+  'settings.streamFirstChunkTimeout': 'First streamed reply timeout (seconds)',
+  'settings.streamFirstChunkTimeoutHelp':
+    'If the model has not started streaming output within this many seconds after it is ready, the request is cancelled. This does not include time while the model weights are downloading (see the download banner). Use 0 to disable. When enabled, allowed range is 1–600 seconds.',
   'settings.lead':
     'Preferences and chats are stored in IndexedDB on this device. The system prompt is sent to the model when a chat session starts.',
   'settings.navAria': 'Settings categories',
@@ -59,6 +62,14 @@ Open \`chrome://on-device-internals\` for download status and logs.`,
   'settings.sectionProfile': 'Profile',
   'settings.sectionSystem': 'System prompt',
   'settings.sectionData': 'Data',
+  'settings.sectionFiles': 'Files',
+  'settings.sectionBackup': 'Backup',
+  'settings.sectionAbout': 'About',
+  'settings.storagePieTitle': 'Storage for this site (origin)',
+  'settings.storagePieCaption': '1 MiB = 1024 KiB. Values come from the browser estimate (same as the pressure banner).',
+  'settings.storagePieLegendUsed': 'In use',
+  'settings.storagePieLegendFree': 'Free',
+  'settings.storagePieLegendQuota': 'Total quota',
   'settings.refineWithAi': 'Improve with AI',
   'settings.refining': 'Improving…',
   'settings.refineDone': 'Prompt updated.',
@@ -90,11 +101,19 @@ Rules:
   'settings.clearAllDataAction': 'Delete everything',
   'settings.clearedChats': 'All chats were deleted.',
   'settings.clearedAllData': 'All Minerva data in this browser was removed.',
-  'settings.storageQuotaLine': 'Storage: {used} MB used · {free} MB free · {quota} MB quota',
+  'settings.storageQuotaLine': 'Storage: {used} MiB in use · {free} MiB free · {quota} MiB quota',
   'settings.storageQuotaTitle':
-    'Estimated storage for this site: {used} MB in use, {free} MB free, {quota} MB total quota (browser; includes IndexedDB and other persisted data).',
+    'Estimated storage for this site: {used} MiB in use, {free} MiB free, {quota} MiB total quota (1 MiB = 1024 KiB; browser estimate includes IndexedDB and other persisted data for this origin).',
   'settings.storageQuotaUnavailable': 'Storage estimate unavailable in this environment.',
   'settings.storageQuotaUnavailableTitle': 'This browser did not report storage quota details.',
+  'settings.maxTextAttachmentMib': 'Max size per text attachment',
+  'settings.maxTextAttachmentMibTextAria': 'Exact limit in MiB (decimal allowed, use . or ,)',
+  'settings.maxTextAttachmentMibHelp':
+    'MiB = 1024² bytes (same as site storage in Data). Allowed range is {minMib}–{maxMib} MiB per file. This cap limits RAM and model context, not your whole origin quota. Applies when you attach text files in the composer; save settings to persist.',
+  'settings.maxImageAttachmentMib': 'Max size per image attachment',
+  'settings.maxImageAttachmentMibTextAria': 'Exact image limit in MiB (decimal allowed, use . or ,)',
+  'settings.maxImageAttachmentMibHelp':
+    'Allowed range is {minMib}–{maxMib} MiB per image. Applies when you attach images in the composer; save settings to persist.',
   'storage.pressureBanner':
     'Browser storage for this site is nearly full. Free space so new messages and attachments can be saved.',
   'storage.pressureBannerLink': 'Open Data settings',
@@ -134,6 +153,22 @@ Rules:
   'chat.delete': 'Delete',
   'chat.deleteConfirmTitle': 'Delete this chat?',
   'chat.deleteConfirmBody': 'This cannot be undone.',
+  'chat.userMessage.edit': 'Edit message',
+  'chat.userMessage.resend': 'Resend and get a new reply',
+  'chat.userMessage.truncateConfirmTitle': 'Remove later messages?',
+  'chat.userMessage.truncateConfirmBody':
+    'Messages after this one—including the assistant’s replies—will be removed. This cannot be undone.',
+  'chat.userMessage.truncateConfirmAction': 'Continue',
+  'chat.userMessage.deleteTitle': 'Remove message',
+  'chat.userMessage.deleteConfirmTitle': 'Remove this message?',
+  'chat.userMessage.deleteConfirmBodyOnly': 'This message will be removed. You cannot undo this.',
+  'chat.userMessage.deleteConfirmBodyWithFollowing':
+    'This message and everything after it—including assistant replies—will be removed. You cannot undo this.',
+  'chat.userMessage.deleteConfirmAction': 'Remove',
+  'chat.userMessage.toolbarAria': 'Edit, resend, or remove this message.',
+  'chat.editUserMessage.title': 'Edit message',
+  'chat.editUserMessage.save': 'Save and regenerate',
+  'chat.editUserMessage.empty': 'Add some text or keep at least one attachment.',
   'chat.summary.view': 'View summary',
   'chat.summary.title': 'Chat summary',
   'chat.summary.loading': 'Summarizing…',
@@ -224,6 +259,10 @@ Rules:
   'waiting': 'Generating…',
   'error.generic': 'Something went wrong. Try again.',
   'error.noLm': 'Could not start the model.',
+  'error.streamFirstChunkTimeout':
+    'The model did not start replying within {seconds} s. You can raise this limit in Settings → General.',
+  'error.promptInputTooLarge':
+    'This request is too large for the on-device model (Chrome limits input size). Try a shorter message, a smaller file, or an excerpt from a large table or document.',
   'lang.en': 'English',
   'lang.es': 'Spanish (neutral)',
   'lang.esAR': 'Spanish (Argentina)',
@@ -238,6 +277,8 @@ const es: Dict = {
   'gate.unsupported': 'Este navegador no expone la Prompt API',
   'gate.unsupportedHint':
     'Usá una versión compatible de Chrome con la IA en el dispositivo habilitada, o abrí esta app desde localhost según la documentación de Google.',
+  'gate.chromeMaybeFlagsHint':
+    'En Google Chrome y otros navegadores basados en Chromium, la Prompt API suele aparecer solo cuando habilitás los flags del modelo en el dispositivo y reiniciás el navegador.',
   'gate.blocked': 'Gemini Nano todavía no está disponible',
   'gate.blockedHint':
     'La API está presente pero el modelo figura como no disponible. Habilitá los flags necesarios, reiniciá Chrome y probá de nuevo.',
@@ -272,6 +313,9 @@ Abrí \`chrome://on-device-internals\` para ver el estado de la descarga y regis
   'settings.chatTitleInterval': 'Título del chat con IA (cada cuántos mensajes tuyos)',
   'settings.chatTitleIntervalHelp':
     'Después del primer mensaje tuyo y la respuesta del asistente, Minerva le pide al modelo un título corto para la lista de chats. Si el número es mayor que 0, lo vuelve a pedir cada esa cantidad de mensajes tuyos (por ejemplo 10 → tras los mensajes 1, 11, 21…). Con 0 solo actualiza el título la primera vez.',
+  'settings.streamFirstChunkTimeout': 'Tiempo máximo para el primer fragmento de respuesta (segundos)',
+  'settings.streamFirstChunkTimeoutHelp':
+    'Si el modelo no empezó a devolver texto en streaming dentro de ese plazo después de estar listo, se cancela el pedido. No cuenta el tiempo mientras se descargan los pesos del modelo (ver el aviso de descarga). Con 0 se desactiva. Si está activado, el rango permitido es 1–600 segundos.',
   'settings.lead':
     'Los ajustes y los chats se guardan en IndexedDB en este dispositivo. El prompt del sistema se envía al modelo cuando arranca la sesión de un chat.',
   'settings.navAria': 'Categorías de ajustes',
@@ -279,6 +323,15 @@ Abrí \`chrome://on-device-internals\` para ver el estado de la descarga y regis
   'settings.sectionProfile': 'Perfil',
   'settings.sectionSystem': 'Prompt del sistema',
   'settings.sectionData': 'Datos',
+  'settings.sectionFiles': 'Archivos',
+  'settings.sectionBackup': 'Respaldo',
+  'settings.sectionAbout': 'Acerca de',
+  'settings.storagePieTitle': 'Almacenamiento de este sitio (origen)',
+  'settings.storagePieCaption':
+    '1 MiB = 1024 KiB. Valores según la estimación del navegador (la misma que usa el aviso de cupo).',
+  'settings.storagePieLegendUsed': 'En uso',
+  'settings.storagePieLegendFree': 'Libre',
+  'settings.storagePieLegendQuota': 'Cupo total',
   'settings.refineWithAi': 'Mejorar con IA',
   'settings.refining': 'Mejorando…',
   'settings.refineDone': 'Prompt actualizado.',
@@ -310,11 +363,19 @@ Reglas:
   'settings.clearAllDataAction': 'Borrar todo',
   'settings.clearedChats': 'Se borraron todos los chats.',
   'settings.clearedAllData': 'Se borró todo lo de Minerva en este navegador.',
-  'settings.storageQuotaLine': 'Almacenamiento: {used} MB en uso · {free} MB libres · {quota} MB de cupo',
+  'settings.storageQuotaLine': 'Almacenamiento: {used} MiB en uso · {free} MiB libres · {quota} MiB de cupo',
   'settings.storageQuotaTitle':
-    'Estimación de almacenamiento de este sitio: {used} MB en uso, {free} MB libres, {quota} MB de cupo total (navegador; incluye IndexedDB y otros datos persistidos).',
+    'Estimación de almacenamiento de este sitio: {used} MiB en uso, {free} MiB libres, {quota} MiB de cupo total (1 MiB = 1024 KiB; estimación del navegador, incluye IndexedDB y otros datos de este origen).',
   'settings.storageQuotaUnavailable': 'No hay estimación de almacenamiento en este entorno.',
   'settings.storageQuotaUnavailableTitle': 'El navegador no informó detalles del cupo de almacenamiento.',
+  'settings.maxTextAttachmentMib': 'Tamaño máximo por archivo de texto',
+  'settings.maxTextAttachmentMibTextAria': 'Límite exacto en MiB (se permiten decimales, usá . o ,)',
+  'settings.maxTextAttachmentMibHelp':
+    'MiB = 1024² bytes (la misma unidad que el almacenamiento en Datos). El rango permitido es {minMib}–{maxMib} MiB por archivo. Ese tope limita RAM y contexto del modelo, no el cupo total del origen. Se aplica al adjuntar archivos de texto en el compositor; guardá la configuración para persistirlo.',
+  'settings.maxImageAttachmentMib': 'Tamaño máximo por imagen',
+  'settings.maxImageAttachmentMibTextAria': 'Límite exacto de imagen en MiB (se permiten decimales, usá . o ,)',
+  'settings.maxImageAttachmentMibHelp':
+    'El rango permitido es {minMib}–{maxMib} MiB por imagen. Se aplica al adjuntar imágenes en el compositor; guardá la configuración para persistirlo.',
   'storage.pressureBanner':
     'El almacenamiento del navegador para este sitio está casi lleno. Liberá espacio para que se puedan guardar mensajes y adjuntos nuevos.',
   'storage.pressureBannerLink': 'Abrir ajustes de Datos',
@@ -355,6 +416,22 @@ Reglas:
   'chat.delete': 'Borrar',
   'chat.deleteConfirmTitle': '¿Borrar este chat?',
   'chat.deleteConfirmBody': 'No se puede deshacer.',
+  'chat.userMessage.edit': 'Editar mensaje',
+  'chat.userMessage.resend': 'Reenviar y pedir otra respuesta',
+  'chat.userMessage.truncateConfirmTitle': '¿Sacar los mensajes posteriores?',
+  'chat.userMessage.truncateConfirmBody':
+    'Se van a borrar los mensajes que vienen después de este, incluidas las respuestas del asistente. No se puede deshacer.',
+  'chat.userMessage.truncateConfirmAction': 'Continuar',
+  'chat.userMessage.deleteTitle': 'Quitar mensaje',
+  'chat.userMessage.deleteConfirmTitle': '¿Quitar este mensaje?',
+  'chat.userMessage.deleteConfirmBodyOnly': 'Se va a borrar este mensaje. No se puede deshacer.',
+  'chat.userMessage.deleteConfirmBodyWithFollowing':
+    'Se van a borrar este mensaje y todos los que vienen después, incluidas las respuestas del asistente. No se puede deshacer.',
+  'chat.userMessage.deleteConfirmAction': 'Quitar',
+  'chat.userMessage.toolbarAria': 'Editar, reenviar o quitar este mensaje.',
+  'chat.editUserMessage.title': 'Editar mensaje',
+  'chat.editUserMessage.save': 'Guardar y regenerar',
+  'chat.editUserMessage.empty': 'Agregá texto o dejá al menos un adjunto.',
   'chat.summary.view': 'Ver resumen',
   'chat.summary.title': 'Resumen del chat',
   'chat.summary.loading': 'Resumiendo…',
@@ -445,6 +522,10 @@ Reglas:
   'waiting': 'Generando…',
   'error.generic': 'Algo salió mal. Probá de nuevo.',
   'error.noLm': 'No se pudo iniciar el modelo.',
+  'error.streamFirstChunkTimeout':
+    'El modelo no empezó a responder en streaming dentro de {seconds} s. Podés subir ese límite en Ajustes → General.',
+  'error.promptInputTooLarge':
+    'Este pedido es demasiado grande para el modelo en el dispositivo (Chrome limita el tamaño de la entrada). Probá con un mensaje más corto, un archivo más chico o un extracto de una tabla o documento grande.',
 };
 
 const esAR: Dict = {

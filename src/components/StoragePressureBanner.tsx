@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { Translator } from '../i18n';
-import { getOriginStorageQuotaMb } from '../storageEstimate';
+import { getOriginStorageQuotaMib } from '../storageEstimate';
 
 const REFRESH_MS = 30_000;
 /** Show banner when used/quota is at or above this ratio (0–1). */
@@ -17,12 +17,12 @@ export function StoragePressureBanner({ t, onOpenDataSettings }: Props) {
 
   useEffect(() => {
     const tick = () => {
-      void getOriginStorageQuotaMb().then((q) => {
-        if (q.quotaMb <= 0) {
+      void getOriginStorageQuotaMib().then((q) => {
+        if (q.quotaMib <= 0) {
           setVisible(false);
           return;
         }
-        setVisible(q.usedMb / q.quotaMb >= PRESSURE_RATIO);
+        setVisible(q.usedMib / q.quotaMib >= PRESSURE_RATIO);
       });
     };
     tick();

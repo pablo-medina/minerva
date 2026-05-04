@@ -1,25 +1,29 @@
-export type StorageQuotaMb = {
-  quotaMb: number;
-  usedMb: number;
-  freeMb: number;
+/**
+ * Values from `navigator.storage.estimate()` converted with divisor 1024² (mebibytes, MiB).
+ * Names use `Mib` to avoid confusion with decimal megabytes (10⁶ bytes).
+ */
+export type OriginStorageQuotaMib = {
+  quotaMib: number;
+  usedMib: number;
+  freeMib: number;
 };
 
 /** Uses `navigator.storage.estimate()` when available; otherwise zeros. */
-export async function getOriginStorageQuotaMb(): Promise<StorageQuotaMb> {
+export async function getOriginStorageQuotaMib(): Promise<OriginStorageQuotaMib> {
   if (typeof navigator === 'undefined' || !navigator.storage?.estimate) {
-    return { quotaMb: 0, usedMb: 0, freeMb: 0 };
+    return { quotaMib: 0, usedMib: 0, freeMib: 0 };
   }
   try {
     const { quota = 0, usage = 0 } = await navigator.storage.estimate();
-    const quotaMb = quota / (1024 * 1024);
-    const usedMb = usage / (1024 * 1024);
-    const freeMb = Math.max(0, quotaMb - usedMb);
+    const quotaMib = quota / (1024 * 1024);
+    const usedMib = usage / (1024 * 1024);
+    const freeMib = Math.max(0, quotaMib - usedMib);
     return {
-      quotaMb: Math.round(quotaMb * 100) / 100,
-      usedMb: Math.round(usedMb * 100) / 100,
-      freeMb: Math.round(freeMb * 100) / 100,
+      quotaMib: Math.round(quotaMib * 100) / 100,
+      usedMib: Math.round(usedMib * 100) / 100,
+      freeMib: Math.round(freeMib * 100) / 100,
     };
   } catch {
-    return { quotaMb: 0, usedMb: 0, freeMb: 0 };
+    return { quotaMib: 0, usedMib: 0, freeMib: 0 };
   }
 }

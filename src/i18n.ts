@@ -64,13 +64,14 @@ Open \`chrome://on-device-internals\` for download status and logs.`,
   'settings.streamFirstChunkTimeoutHelp':
     'If the model has not started streaming output within this many seconds after it is ready, the request is cancelled. This does not include time while the model weights are downloading (see the download banner). Use 0 to disable. When enabled, allowed range is 1–600 seconds.',
   'settings.lead':
-    'Preferences and chats are stored in IndexedDB on this device. The system prompt is sent to the model when a chat session starts.',
+    'Preferences and chats are stored in IndexedDB on this device. The active role’s instructions are sent with the model when a chat session is created.',
   'settings.navAria': 'Settings categories',
   'settings.sectionGeneral': 'General',
   'settings.sectionRemoteLm': 'AI',
   'settings.ai.chat': 'Chat AI',
   'settings.ai.system': 'System AI',
   'settings.ai.none': 'None',
+  'settings.ai.unavailableSuffix': ' (unavailable)',
   'settings.ai.searchPlaceholder': 'Search models…',
   'settings.ai.filter': 'Filter models',
   'settings.ai.filter.all': 'All',
@@ -91,8 +92,8 @@ Open \`chrome://on-device-internals\` for download status and logs.`,
   'settings.ai.aliasGenerateBadChatModel': 'Pick an external model in Chat AI first.',
   'settings.window.maximize': 'Maximize window',
   'settings.window.restore': 'Restore window',
-  'settings.sectionProfile': 'Profile',
-  'settings.sectionSystem': 'System prompt',
+  'settings.sectionProfile': 'User',
+  'settings.sectionSystem': 'Roles',
   'settings.sectionData': 'Data',
   'settings.sectionFiles': 'Files',
   'settings.sectionBackup': 'Backup',
@@ -106,16 +107,66 @@ Open \`chrome://on-device-internals\` for download status and logs.`,
   'settings.refining': 'Improving…',
   'settings.refineDone': 'Prompt updated.',
   'settings.refineFailed': 'Could not refine the prompt. Try again.',
-  'settings.systemPromptRefine.instruction': `You improve system prompts for a small on-device assistant (Minerva). The user edits a "system prompt" field.
+  'settings.roleDescriptionRefine.instruction': `You improve role descriptions (assistant instructions) for a small on-device assistant (Minerva). The user edits a "description" field for one role.
 
 Rules:
-- Reply with the improved system prompt text ONLY. No preamble, no markdown code fences, no explanation before or after.
+- Reply with the improved description text ONLY. No preamble, no markdown code fences, no explanation before or after.
 - Keep it practical and concise (usually under 800 characters unless the draft clearly needs more).
 - Preserve the user's intent and the language of the draft.
-- If the draft is empty, output one concise default system prompt in English suitable for a helpful, brief assistant.`,
-  'settings.systemPrompt': 'System prompt (optional)',
-  'settings.systemPromptPlaceholder': 'e.g. Reply concisely in Spanish.',
-  'settings.systemPromptHelp': 'Applied when the language model session is created for this chat.',
+- If the draft is empty, output one concise default instruction in English suitable for a helpful, brief assistant.`,
+  'settings.roles.help':
+    'Define named roles with optional instructions. In chat, pick a role or **None** for default behavior (no extra instructions).',
+  'settings.roles.add': 'Add role',
+  'settings.roles.editTitle': 'Edit role',
+  'settings.roles.listEmpty': 'No roles yet. Add one to give the assistant different behaviors.',
+  'settings.roles.editAria': 'Edit role',
+  'settings.roles.hintLabel': 'Short idea',
+  'settings.roles.hintPlaceholder': 'e.g. Lucas, coding assistant',
+  'settings.roles.hintHelp':
+    'Optional. Use Complete with AI to fill the title and description from your phrase (model decides how to use any name).',
+  'settings.roles.generateFromHint': 'Complete with AI',
+  'settings.roles.generateFromHintAria': 'Complete role title and description with AI',
+  'settings.roles.generateFromHintInstruction': `You help define a "role" for a small browser assistant (Minerva). The user gives a short phrase (often a name and a kind of assistant).
+
+Reply with a single JSON object ONLY. No markdown code fences, no text before or after.
+
+Exact shape:
+{"name":"short role title","description":"detailed instructions for the assistant in that role"}
+
+Rules:
+- "name": concise UI label (typically under 80 characters).
+- "description": practical system-style instructions (tone, expertise, boundaries); write the persona naturally.
+- Match the language of the user's phrase unless they clearly want another language.
+- If the phrase is vague, infer a sensible assistant.`,
+  'settings.roles.generateFromHintFailed': 'Could not generate the role. Try rephrasing or try again.',
+  'settings.roles.chatAiLabel': 'Chat model for this role',
+  'settings.roles.chatAiDefault': 'Default',
+  'settings.roles.chatAiSelectAria': 'Chat model override for this role',
+  'settings.roles.chatAiHelp':
+    'Default uses the global Chat AI. Options show the real model id or Gemini Nano brand, not the display alias.',
+  'settings.roles.chatAiPickerTitle': 'Chat model for this role',
+  'settings.roles.chatAiUseGlobal': 'Use global Chat AI',
+  'settings.roles.sandboxSectionSummary': 'Try a reply (optional)',
+  'settings.roles.sandboxTitle': 'Try a reply',
+  'settings.roles.sandboxLead':
+    'Uses this role’s instructions and model with the same session preamble as chats (language, time, optional location).',
+  'settings.roles.sandboxPromptPlaceholder': 'Type a user message to test…',
+  'settings.roles.sandboxSend': 'Send test',
+  'settings.roles.sandboxSending': 'Sending…',
+  'settings.roles.sandboxStop': 'Stop',
+  'settings.roles.sandboxReplyPlaceholder': 'Assistant reply appears here.',
+  'settings.roles.sandboxError': 'The test failed. Check Chat AI settings and try again.',
+  'settings.roles.name': 'Name',
+  'settings.roles.description': 'Description',
+  'settings.roles.descriptionPlaceholder': 'e.g. You are a coding assistant; prefer short answers with code blocks.',
+  'settings.roles.removeAria': 'Remove role',
+  'settings.roles.deleteConfirmTitle': 'Delete this role?',
+  'settings.roles.deleteConfirmBody':
+    'This removes it from settings. Chats that had this role selected will stop using its instructions.',
+  'settings.roles.deleteConfirmAction': 'Delete role',
+  'roles.none': 'None',
+  'roles.unknown': 'Unknown role',
+  'roles.unnamed': 'Untitled role',
   'settings.preferredName': 'Your name for the assistant',
   'settings.preferredNamePlaceholder': 'e.g. Alex',
   'settings.preferredNameHelp':
@@ -129,7 +180,7 @@ Rules:
   'settings.clearChatsAction': 'Delete chats',
   'settings.clearAllDataTitle': 'Delete all data?',
   'settings.clearAllDataBody':
-    'This removes chats, messages, and settings (including the system prompt) stored for Minerva in this browser. External AI URL and API key saved for this site are removed too.',
+    'This removes chats, messages, and settings (including roles) stored for Minerva in this browser. External AI URL and API key saved for this site are removed too.',
   'settings.remoteLm.lead':
     'When the on-device Prompt API (Gemini Nano) is unavailable, you can point Minerva at an OpenAI-compatible endpoint you trust. Chats and attachments stay in this browser.',
   'settings.remoteLm.offlineNote':
@@ -318,11 +369,15 @@ Rules:
   'turnStats.estimatedShort': 'est.',
   'turnStats.nanoLead':
     'The Prompt API does not expose token usage. Prompt and completion values are rough estimates (~4 characters per token; each attached image adds a fixed overhead; attached text file characters are included roughly).',
-  'composer.toolbarAria': 'Attach files, delete current chat, export chat, and view summary',
+  'composer.toolbarAria': 'Attach files, choose role, delete current chat, export chat, and view summary',
   'composer.deleteCurrentChatAria': 'Delete current chat',
   'composer.mobileIdentityAria': 'Who is speaking in this thread',
   'composer.mobileChipAssistant': 'Assistant',
   'composer.mobileChipYou': 'You',
+  'composer.role.mobileChip': 'Role',
+  'composer.role.rowLabel': 'Role',
+  'composer.role.menuAria': 'Choose assistant role',
+  'composer.role.railAria': 'Open role menu',
   'chat.attach.images': 'Attach images',
   'chat.attach.filesAndImages': 'Attach files and images',
   'chat.attach.hintUnavailable':
@@ -423,13 +478,14 @@ Abrí \`chrome://on-device-internals\` para ver el estado de la descarga y regis
   'settings.streamFirstChunkTimeoutHelp':
     'Si el modelo no empezó a devolver texto en streaming dentro de ese plazo después de estar listo, se cancela el pedido. No cuenta el tiempo mientras se descargan los pesos del modelo (ver el aviso de descarga). Con 0 se desactiva. Si está activado, el rango permitido es 1–600 segundos.',
   'settings.lead':
-    'Los ajustes y los chats se guardan en IndexedDB en este dispositivo. El prompt del sistema se envía al modelo cuando arranca la sesión de un chat.',
+    'Los ajustes y los chats se guardan en IndexedDB en este dispositivo. Las instrucciones del rol activo se envían al modelo cuando se crea la sesión de un chat.',
   'settings.navAria': 'Categorías de ajustes',
   'settings.sectionGeneral': 'General',
   'settings.sectionRemoteLm': 'IA',
   'settings.ai.chat': 'IA del chat',
   'settings.ai.system': 'IA del sistema',
   'settings.ai.none': 'Ninguna',
+  'settings.ai.unavailableSuffix': ' (no disponible)',
   'settings.ai.searchPlaceholder': 'Buscar modelos…',
   'settings.ai.filter': 'Filtrar modelos',
   'settings.ai.filter.all': 'Todos',
@@ -450,8 +506,8 @@ Abrí \`chrome://on-device-internals\` para ver el estado de la descarga y regis
   'settings.ai.aliasGenerateBadChatModel': 'Primero elegí un modelo externo en IA del chat.',
   'settings.window.maximize': 'Maximizar ventana',
   'settings.window.restore': 'Restaurar ventana',
-  'settings.sectionProfile': 'Perfil',
-  'settings.sectionSystem': 'Prompt del sistema',
+  'settings.sectionProfile': 'Usuario',
+  'settings.sectionSystem': 'Roles',
   'settings.sectionData': 'Datos',
   'settings.sectionFiles': 'Archivos',
   'settings.sectionBackup': 'Respaldo',
@@ -466,16 +522,67 @@ Abrí \`chrome://on-device-internals\` para ver el estado de la descarga y regis
   'settings.refining': 'Mejorando…',
   'settings.refineDone': 'Prompt actualizado.',
   'settings.refineFailed': 'No se pudo refinar el prompt. Probá de nuevo.',
-  'settings.systemPromptRefine.instruction': `Mejorás prompts de sistema para un asistente chico en el dispositivo (Minerva). El usuario edita un campo de "prompt del sistema".
+  'settings.roleDescriptionRefine.instruction': `Mejorás descripciones de rol (instrucciones del asistente) para un asistente chico en el dispositivo (Minerva). El usuario edita un campo de "descripción" de un rol.
 
 Reglas:
-- Respondé SOLO con el texto del prompt de sistema mejorado. Sin preámbulo, sin cercos markdown de código, sin explicación antes ni después.
+- Respondé SOLO con el texto de la descripción mejorada. Sin preámbulo, sin cercos markdown de código, sin explicación antes ni después.
 - Que sea práctico y conciso (normalmente menos de 800 caracteres salvo que el borrador claramente pida más).
 - Preservá la intención del usuario y el idioma del borrador.
-- Si el borrador está vacío, devolvé un prompt de sistema breve por defecto en español, adecuado para un asistente útil y conciso.`,
-  'settings.systemPrompt': 'Prompt del sistema (opcional)',
-  'settings.systemPromptPlaceholder': 'ej.: Respondé en español, breve y claro.',
-  'settings.systemPromptHelp': 'Se aplica cuando se crea la sesión del modelo para este chat.',
+- Si el borrador está vacío, devolvé instrucciones breves por defecto en español, adecuadas para un asistente útil y conciso.`,
+  'settings.roles.help':
+    'Definí roles con nombre e instrucciones opcionales. En el chat podés elegir un rol o **Ninguno** para el comportamiento por defecto (sin instrucciones extra).',
+  'settings.roles.add': 'Agregar rol',
+  'settings.roles.editTitle': 'Editar rol',
+  'settings.roles.listEmpty': 'Todavía no hay roles. Agregá uno para darle distintos comportamientos al asistente.',
+  'settings.roles.editAria': 'Editar rol',
+  'settings.roles.hintLabel': 'Idea en pocas palabras',
+  'settings.roles.hintPlaceholder': 'ej.: Lucas, asistente de código',
+  'settings.roles.hintHelp':
+    'Opcional. Usá Completar con IA para rellenar el título y la descripción a partir de tu frase (el modelo decide cómo usar un nombre si lo mencionás).',
+  'settings.roles.generateFromHint': 'Completar con IA',
+  'settings.roles.generateFromHintAria': 'Completar título y descripción del rol con IA',
+  'settings.roles.generateFromHintInstruction': `Ayudás a definir un "rol" para un asistente chico en el navegador (Minerva). La persona escribe una frase corta (a menudo un nombre y qué tipo de asistente es).
+
+Respondé con UN solo objeto JSON. Sin cercos markdown de código, sin texto antes ni después.
+
+Forma exacta:
+{"name":"título corto del rol","description":"instrucciones detalladas para el asistente en ese rol"}
+
+Reglas:
+- "name": etiqueta breve para la UI (normalmente menos de 80 caracteres).
+- "description": instrucciones prácticas estilo sistema (tono, expertise, límites); escribí la persona con naturalidad.
+- Coincidí con el idioma de la frase de la persona salvo que pida otro explícitamente.
+- Si la frase es vaga, inferí un asistente razonable.`,
+  'settings.roles.generateFromHintFailed': 'No se pudo generar el rol. Reformulá la frase o probá de nuevo.',
+  'settings.roles.chatAiLabel': 'Modelo de chat para este rol',
+  'settings.roles.chatAiDefault': 'Predeterminado',
+  'settings.roles.chatAiSelectAria': 'Modelo de chat específico para este rol',
+  'settings.roles.chatAiHelp':
+    'Predeterminado usa la IA de chat global. Las opciones muestran el id real del modelo o la marca Gemini Nano, no el alias visible.',
+  'settings.roles.chatAiPickerTitle': 'Modelo de chat para este rol',
+  'settings.roles.chatAiUseGlobal': 'Usar IA de chat global',
+  'settings.roles.sandboxSectionSummary': 'Probar una respuesta (opcional)',
+  'settings.roles.sandboxTitle': 'Probar una respuesta',
+  'settings.roles.sandboxLead':
+    'Usa las instrucciones y el modelo de este rol con el mismo preámbulo de sesión que en el chat (idioma, hora, ubicación opcional).',
+  'settings.roles.sandboxPromptPlaceholder': 'Escribí un mensaje de usuario para probar…',
+  'settings.roles.sandboxSend': 'Enviar prueba',
+  'settings.roles.sandboxSending': 'Enviando…',
+  'settings.roles.sandboxStop': 'Detener',
+  'settings.roles.sandboxReplyPlaceholder': 'Acá aparece la respuesta del asistente.',
+  'settings.roles.sandboxError': 'Falló la prueba. Revisá la configuración de IA de chat y probá de nuevo.',
+  'settings.roles.name': 'Nombre',
+  'settings.roles.description': 'Descripción',
+  'settings.roles.descriptionPlaceholder':
+    'ej.: Sos un asistente de código; respondé breve con bloques de código cuando sirva.',
+  'settings.roles.removeAria': 'Quitar rol',
+  'settings.roles.deleteConfirmTitle': '¿Borrar este rol?',
+  'settings.roles.deleteConfirmBody':
+    'Se va a quitar de los ajustes. Los chats que tenían este rol dejan de usar sus instrucciones.',
+  'settings.roles.deleteConfirmAction': 'Borrar rol',
+  'roles.none': 'Ninguno',
+  'roles.unknown': 'Rol desconocido',
+  'roles.unnamed': 'Sin nombre',
   'settings.preferredName': 'Nombre (cómo te llama el asistente)',
   'settings.preferredNamePlaceholder': 'ej.: Alex',
   'settings.preferredNameHelp':
@@ -489,7 +596,7 @@ Reglas:
   'settings.clearChatsAction': 'Borrar chats',
   'settings.clearAllDataTitle': '¿Borrar todos los datos?',
   'settings.clearAllDataBody':
-    'Se eliminan chats, mensajes y ajustes (incluido el prompt del sistema) guardados para Minerva en este navegador. También se borran la URL y la API key de IA externa guardadas para este sitio.',
+    'Se eliminan chats, mensajes y ajustes (incluidos los roles) guardados para Minerva en este navegador. También se borran la URL y la API key de IA externa guardadas para este sitio.',
   'settings.remoteLm.lead':
     'Si la Prompt API en el dispositivo (Gemini Nano) no está disponible, podés indicarle a Minerva un endpoint compatible con OpenAI en el que confíes. Los chats y adjuntos siguen en este navegador.',
   'settings.remoteLm.offlineNote':
@@ -681,11 +788,15 @@ Reglas:
   'turnStats.estimatedShort': 'est.',
   'turnStats.nanoLead':
     'La Prompt API no expone el conteo de tokens. Los valores de prompt y respuesta son estimaciones aproximadas (~4 caracteres por token; cada imagen adjunta suma un overhead fijo; los caracteres de archivos de texto adjuntos se incluyen de forma aproximada).',
-  'composer.toolbarAria': 'Adjuntar archivos, borrar el chat actual, exportar el chat y ver el resumen',
+  'composer.toolbarAria': 'Adjuntar archivos, elegir rol, borrar el chat actual, exportar el chat y ver el resumen',
   'composer.deleteCurrentChatAria': 'Borrar el chat actual',
   'composer.mobileIdentityAria': 'Quién habla en este chat',
   'composer.mobileChipAssistant': 'Asistente',
   'composer.mobileChipYou': 'Tú',
+  'composer.role.mobileChip': 'Rol',
+  'composer.role.rowLabel': 'Rol',
+  'composer.role.menuAria': 'Elegir rol del asistente',
+  'composer.role.railAria': 'Abrir menú de roles',
   'chat.time.justNow': 'Recién',
   'model.fallbackShort': 'IA',
   'model.geminiNanoBrand': 'Gemini Nano',

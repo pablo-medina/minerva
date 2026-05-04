@@ -4138,3 +4138,280 @@ html[data-theme='light'] .minerva-banner-info {
     box-shadow: 0 12px 36px color-mix(in oklab, #000 55%, transparent);
   }
 }
+
+/* Assistant roles (settings list + draggable editor + composer picker) */
+.settings-roles-picker-list.openai-lm-model-picker-list {
+  max-height: min(52vh, 360px);
+}
+
+.settings-roles-list-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  transition: background 0.12s ease;
+}
+
+.settings-roles-list-row:last-child {
+  border-bottom: none;
+}
+
+.settings-roles-list-row:hover {
+  background: color-mix(in oklab, var(--text) 6%, transparent);
+}
+
+.settings-roles-list-main-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0.48rem 0.55rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.18rem;
+}
+
+.settings-roles-list-main-btn:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 45%, transparent);
+  outline-offset: -2px;
+}
+
+.settings-roles-list-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-roles-list-desc {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.settings-roles-list-meta {
+  font-size: 0.68rem;
+  color: color-mix(in oklab, var(--accent) 75%, var(--text-muted));
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-roles-add-field {
+  margin-top: 0.85rem;
+}
+
+.role-editor-window-body.settings-dialog-root--window {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  gap: 0;
+}
+
+.role-editor-window-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-right: 0.15rem;
+}
+
+.role-editor-window-scroll > .field + .field {
+  margin-top: 0.55rem;
+}
+
+.role-editor-window-scroll > .role-editor-sandbox-details {
+  margin-top: 0.45rem;
+}
+
+.role-editor-footer {
+  padding-top: 0.65rem;
+  margin-top: 0.35rem;
+}
+
+.role-editor-desc-textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.role-editor-sandbox-details {
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  background: color-mix(in oklab, var(--bg-deep) 28%, transparent);
+  padding: 0.3rem 0.55rem 0.55rem;
+}
+
+.role-editor-sandbox-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.875rem;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  padding: 0.35rem 0.2rem;
+}
+
+.role-editor-sandbox-details summary::-webkit-details-marker {
+  color: var(--text-muted);
+}
+
+.role-editor-sandbox-details .role-editor-sandbox {
+  margin-top: 0.25rem;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.role-editor-sandbox-inline-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.role-editor-hint-field {
+  padding-top: 0.15rem;
+  border-top: 1px dashed color-mix(in oklab, var(--border) 88%, transparent);
+  margin-top: 0.35rem;
+}
+
+.role-editor-sandbox {
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
+  background: color-mix(in oklab, var(--bg-deep) 40%, transparent);
+}
+
+.role-sandbox-prompt-textarea {
+  margin-bottom: 0.45rem;
+}
+
+.role-sandbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.45rem;
+}
+
+.role-sandbox-reply-textarea {
+  min-height: 120px;
+  resize: vertical;
+  opacity: 0.95;
+}
+
+.composer-role-row {
+  margin-top: 0.2rem;
+}
+
+.composer-role-desktop-trigger {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  max-width: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.composer-role-desktop-trigger:hover {
+  color: var(--accent);
+}
+
+.composer-role-desktop-label {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.composer-role-desktop-value {
+  color: var(--text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.composer-role-anchor {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.composer-role-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 50;
+  min-width: 220px;
+  max-width: min(92vw, 320px);
+  max-height: min(42vh, 280px);
+  overflow-y: auto;
+  padding: 0.25rem 0;
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--border) 85%, transparent);
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 28px color-mix(in oklab, #000 35%, transparent);
+}
+
+.composer-role-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.42rem 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.composer-role-option:hover {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+.composer-role-option--active {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.composer-role-chip-trigger {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-role-rail-slot {
+  position: relative;
+}
+
+@media (max-width: 1024px) {
+  .composer-role-popover {
+    left: auto;
+    right: 0;
+    bottom: calc(100% + 4px);
+  }
+}

@@ -18,6 +18,8 @@ type DraggableWindowProps = {
   maximizeAriaLabel?: string;
   restoreAriaLabel?: string;
   mobileBackAriaLabel?: string;
+  /** When false, Escape does not close this window (use when a nested overlay handles Escape). */
+  closeOnEscape?: boolean;
 };
 
 const VIEWPORT_MARGIN = 12;
@@ -85,6 +87,7 @@ export function DraggableWindow({
   maximizeAriaLabel = 'Maximize',
   restoreAriaLabel = 'Restore',
   mobileBackAriaLabel,
+  closeOnEscape = true,
 }: DraggableWindowProps) {
   const [isMobile, setIsMobile] = useState(false);
   const [position, setPosition] = useState<Point | null>(null);
@@ -171,13 +174,13 @@ export function DraggableWindow({
   }, [centeredPosition, normalizedSize.height, normalizedSize.width, position]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !closeOnEscape) return;
     const onEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onEsc);
     return () => window.removeEventListener('keydown', onEsc);
-  }, [onClose, open]);
+  }, [closeOnEscape, onClose, open]);
 
   useLayoutEffect(() => {
     if (!open || isMobile || maximized) return;

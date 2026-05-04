@@ -189,7 +189,16 @@ function wireChatToRecord(w: unknown): ChatThreadRecord | null {
   const updatedAt = typeof s.updatedAt === 'string' ? s.updatedAt : createdAt;
   if (sid !== sessionId) return null;
 
-  const session: ChatSession = { id: sid, title, createdAt, updatedAt };
+  const roleRaw = (s as Record<string, unknown>).activeRoleId;
+  const activeRoleId =
+    typeof roleRaw === 'string' && roleRaw.trim() ? roleRaw.trim() : undefined;
+  const session: ChatSession = {
+    id: sid,
+    title,
+    createdAt,
+    updatedAt,
+    ...(activeRoleId ? { activeRoleId } : {}),
+  };
   const messagesRaw = o.messages;
   if (!Array.isArray(messagesRaw)) return null;
   const messages: PersistedChatMessage[] = [];

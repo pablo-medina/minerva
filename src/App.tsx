@@ -38,15 +38,26 @@ import {
 } from './storage';
 import { fingerprintForChatSummaryCache } from './chatSummary';
 import { shouldRefreshChatTitle } from './chatTitleAi';
+import { newAiRoleId, resolveRoleDisplayLabel, resolveRoleSystemPrompt } from './aiRoles';
 import { generateChatTitleWithSystemAi, summarizeWithSystemAi } from './systemAiTasks';
 import {
   buildSessionInitialPromptsAsync,
+  buildSessionSystemContent,
   defaultSessionSystemContext,
   resolveApproximateLocation,
 } from './sessionSystemPrompt';
 import { buildNanoTurnStats } from './nanoTurnStats';
 import { buildUserTurnModelParts } from './userModelParts';
-import type { AppLang, ChatAttachment, ChatImageAttachment, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
+import type {
+  AppLang,
+  AiRole,
+  ChatAttachment,
+  ChatImageAttachment,
+  ChatMessage,
+  ChatSession,
+  LocalSettings,
+  ThemeMode,
+} from './types';
 import { isChatImageAttachment, isChatTextAttachment } from './types';
 import { ChatExportDialog } from './components/ChatExportDialog';
 import { ImageViewerDialog } from './components/ImageViewerDialog';
@@ -142,6 +153,20 @@ function resolveSelection(settings: LocalSettings, target: 'chat' | 'system'): R
   return { kind: 'none' };
 }
 
+/** Chat AI active for the thread: role override when set, otherwise global Chat AI. */
+function resolveEffectiveChatSelection(settings: LocalSettings, activeRoleId?: string | null): ResolvedAiSelection {
+  const rid = typeof activeRoleId === 'string' ? activeRoleId.trim() : '';
+  if (rid) {
+    const role = settings.aiRoles.find((r) => r.id === rid);
+    const override = role?.chatAiModelKey?.trim();
+    if (override) {
+      const parsed = parseAiModelKey(override);
+      if (parsed.kind !== 'none') return parsed;
+    }
+  }
+  return resolveSelection(settings, 'chat');
+}
+
 function selectionToModelKey(sel: ResolvedAiSelection): string | undefined {
   if (sel.kind === 'nano') return 'nano';
   if (sel.kind === 'openai') return `openai:${sel.modelId}`;
@@ -200,6 +225,44 @@ function aiSelectionSettingsLabel(sel: ResolvedAiSelection, t: ReturnType<typeof
   if (sel.kind === 'none') return t('settings.ai.none');
   if (sel.kind === 'nano') return t('model.geminiNanoBrand');
   return sel.modelId;
+}
+
+/** Role editor Chat model row: default = inherit global Chat AI; otherwise technical label. */
+function roleEditorChatModelTriggerLabel(
+  role: AiRole,
+  settings: LocalSettings,
+  t: ReturnType<typeof createTranslator>,
+): string {
+  const raw = role.chatAiModelKey?.trim();
+  if (!raw) {
+    return `${t('settings.roles.chatAiDefault')} (${aiSelectionSettingsLabel(resolveSelection(settings, 'chat'), t)})`;
+  }
+  const parsed = parseAiModelKey(raw);
+  if (parsed.kind === 'none') {
+    return `${t('settings.roles.chatAiDefault')} (${aiSelectionSettingsLabel(resolveSelection(settings, 'chat'), t)})`;
+  }
+  return aiSelectionSettingsLabel(parsed, t);
+}
+
+function resolvedSelectionsEquivalent(a: ResolvedAiSelection, b: ResolvedAiSelection): boolean {
+  if (a.kind === 'none' && b.kind === 'none') return true;
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'nano' && b.kind === 'nano') return true;
+  if (a.kind === 'openai' && b.kind === 'openai') return a.modelId === b.modelId;
+  return false;
+}
+
+/** Composer label: alias allowed only when using global Chat AI; role overrides show technical model name/id. */
+function composerChatLabelForEffectiveSelection(
+  effectiveSel: ResolvedAiSelection,
+  settings: LocalSettings,
+  t: ReturnType<typeof createTranslator>,
+): string {
+  const globalSel = resolveSelection(settings, 'chat');
+  if (resolvedSelectionsEquivalent(effectiveSel, globalSel)) {
+    return chatAiComposerDisplayLabel(effectiveSel, settings, t);
+  }
+  return aiSelectionSettingsLabel(effectiveSel, t);
 }
 
 function truncateComposerAiName(label: string, maxChars = 30): string {
@@ -282,6 +345,27 @@ function resolveExternalAliasTargetModelId(settings: LocalSettings): string {
 
 function isPlaceholderExternalModelId(id: string): boolean {
   return id.trim().toLowerCase() === 'x';
+}
+
+function parseRoleHintAiPayload(raw: string): { name: string; description: string } | null {
+  let text = raw.trim();
+  if (text.startsWith('```')) {
+    text = text
+      .replace(/^```(?:json)?\s*\n?/i, '')
+      .replace(/\n?```\s*$/i, '')
+      .trim();
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== 'object') return null;
+    const o = parsed as Record<string, unknown>;
+    const name = typeof o.name === 'string' ? o.name.trim() : '';
+    const description = typeof o.description === 'string' ? o.description.trim() : '';
+    if (!name && !description) return null;
+    return { name, description };
+  } catch {
+    return null;
+  }
 }
 
 function isAcceptableAiGeneratedAlias(alias: string, modelId: string): boolean {
@@ -391,6 +475,22 @@ function IconPaperclip({ size = 18 }: { size?: number }) {
         strokeLinecap="round"
         strokeLinejoin="round"
         d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
+      />
+    </svg>
+  );
+}
+
+/** Stacked layers — used for “role” / persona selection in the composer. */
+function IconRoleMasks({ size = 17 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <path
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M12 3 2 8l10 5 10-5-10-5zM2 12l10 5 10-5M2 16l10 5 10-5"
       />
     </svg>
   );
@@ -527,8 +627,8 @@ type SettingsSectionId =
 
 const SETTINGS_SECTION_IDS: SettingsSectionId[] = [
   'general',
-  'remoteModel',
   'profile',
+  'remoteModel',
   'system',
   'data',
   'files',
@@ -578,7 +678,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     systemAiId: undefined,
     openAiConfig: undefined,
     autoAliasExternalModel: true,
-    systemPrompt: '',
+    aiRoles: [],
     preferredName: '',
     chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
     maxTextAttachmentMib: DEFAULT_MAX_TEXT_ATTACHMENT_MIB,
@@ -594,7 +694,11 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [aliasAutoStatus, setAliasAutoStatus] = useState<'idle' | 'ok' | 'error'>('idle');
   const [aliasAutoStatusText, setAliasAutoStatusText] = useState<string | null>(null);
   const [modelUiName, setModelUiName] = useState(() =>
-    chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t),
+    composerChatLabelForEffectiveSelection(
+      resolveEffectiveChatSelection(settingsDraft, undefined),
+      settingsDraft,
+      t,
+    ),
   );
   const modelUiNameForPrompt = useMemo(() => truncateComposerAiName(modelUiName), [modelUiName]);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -607,7 +711,18 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [summaryBody, setSummaryBody] = useState('');
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [summaryInFlight, setSummaryInFlight] = useState(false);
-  const [refiningSystemPrompt, setRefiningSystemPrompt] = useState(false);
+  const [refiningRoleId, setRefiningRoleId] = useState<string | null>(null);
+  const [roleEditorOpenId, setRoleEditorOpenId] = useState<string | null>(null);
+  const [roleEditorHintText, setRoleEditorHintText] = useState('');
+  const [generatingRoleHint, setGeneratingRoleHint] = useState(false);
+  const [roleSandboxPrompt, setRoleSandboxPrompt] = useState('');
+  const [roleSandboxReply, setRoleSandboxReply] = useState('');
+  const [roleSandboxBusy, setRoleSandboxBusy] = useState(false);
+  const roleSandboxAbortRef = useRef<AbortController | null>(null);
+  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
+  const roleMenuDesktopRef = useRef<HTMLDivElement>(null);
+  const roleMenuMobileRef = useRef<HTMLDivElement>(null);
+  const roleMenuRailRef = useRef<HTMLDivElement>(null);
   const [settingsRefineError, setSettingsRefineError] = useState<string | null>(null);
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('general');
   const [imageInputSupported, setImageInputSupported] = useState(false);
@@ -632,8 +747,11 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   >(null);
   const [confirmDeleteUserMessageOpen, setConfirmDeleteUserMessageOpen] = useState(false);
   const [pendingDeleteUserMessageIdx, setPendingDeleteUserMessageIdx] = useState<number | null>(null);
+  const [confirmDeleteRoleOpen, setConfirmDeleteRoleOpen] = useState(false);
+  const [pendingDeleteRoleId, setPendingDeleteRoleId] = useState<string | null>(null);
   const [externalConfigOpen, setExternalConfigOpen] = useState(false);
-  const [aiPickerTarget, setAiPickerTarget] = useState<'chat' | 'system' | null>(null);
+  const [aiPickerTarget, setAiPickerTarget] = useState<'chat' | 'system' | 'role' | null>(null);
+  const [aiPickerRoleId, setAiPickerRoleId] = useState<string | null>(null);
   const [externalModels, setExternalModels] = useState<string[]>([]);
   const [externalModelsBusy, setExternalModelsBusy] = useState(false);
   const [externalModelsError, setExternalModelsError] = useState<string | null>(null);
@@ -644,7 +762,10 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const [chatsFilterQuery, setChatsFilterQuery] = useState('');
 
   const [nanoLmRuntimeOk, setNanoLmRuntimeOk] = useState(false);
-  const chatSelection = useMemo(() => resolveSelection(settingsDraft, 'chat'), [settingsDraft]);
+  const chatSelection = useMemo(() => {
+    const sess = activeSessionId ? sessions.find((s) => s.id === activeSessionId) : undefined;
+    return resolveEffectiveChatSelection(settingsDraft, sess?.activeRoleId);
+  }, [settingsDraft, activeSessionId, sessions]);
   const systemSelection = useMemo(() => resolveSelection(settingsDraft, 'system'), [settingsDraft]);
   const systemSelectionModelId = systemSelection.kind === 'openai' ? systemSelection.modelId : '';
   const chatAiUsable = useMemo(() => {
@@ -688,6 +809,27 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       return o.label.toLowerCase().includes(q);
     });
   }, [aiPickerFilter, aiPickerSearch, unifiedAiOptions]);
+
+  const activeSession = useMemo(
+    () => (activeSessionId ? sessions.find((s) => s.id === activeSessionId) : undefined),
+    [sessions, activeSessionId],
+  );
+  const activeRoleLabel = useMemo(
+    () => resolveRoleDisplayLabel(settingsDraft, activeSession?.activeRoleId, t),
+    [activeSession?.activeRoleId, settingsDraft, t],
+  );
+  const activeRoleLabelShort = useMemo(
+    () => truncateComposerAiName(activeRoleLabel, 28),
+    [activeRoleLabel],
+  );
+
+  const activeSessionRoleSign = useMemo(() => {
+    const s = sessions.find((x) => x.id === activeSessionId);
+    const rid = typeof s?.activeRoleId === 'string' ? s.activeRoleId.trim() : '';
+    const role = rid ? settingsDraft.aiRoles.find((r) => r.id === rid) : undefined;
+    const modelSig = role?.chatAiModelKey?.trim() ?? '';
+    return `${rid}|${modelSig}`;
+  }, [sessions, activeSessionId, settingsDraft.aiRoles]);
 
   const openRemoteLanguageModelSettings = useCallback(() => {
     setChatsOpen(false);
@@ -1029,8 +1171,8 @@ Model id: ${trimmedModelId}`,
   );
 
   useEffect(() => {
-    setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
-  }, [settingsDraft, t]);
+    setModelUiName(composerChatLabelForEffectiveSelection(chatSelection, settingsDraft, t));
+  }, [chatSelection, settingsDraft, t]);
 
   useEffect(() => {
     if (chatSelection.kind === 'none' || !chatAiUsable) return undefined;
@@ -1038,25 +1180,32 @@ Model id: ${trimmedModelId}`,
     lmRef.current?.destroy();
     lmRef.current = null;
     lmUsesImagesRef.current = false;
-    setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
+    setModelUiName(composerChatLabelForEffectiveSelection(chatSelection, settingsDraft, t));
     const sid = activeSessionId;
     if (!sid) return undefined;
 
     void (async () => {
-      const [msgs, settings] = await Promise.all([loadMessages(sid), loadSettings()]);
+      const [msgs, settings, sessionList] = await Promise.all([
+        loadMessages(sid),
+        loadSettings(),
+        loadSessions(),
+      ]);
       if (cancelled) return;
       if (!msgs.length) {
         return;
       }
       try {
-        const sel = resolveSelection(settings, 'chat');
+        const meta = sessionList.find((s) => s.id === sid);
+        const sel = resolveEffectiveChatSelection(settings, meta?.activeRoleId);
         if (sel.kind === 'none') return;
         const geo = await resolveApproximateLocation(2600);
         const ctx = defaultSessionSystemContext(lang, geo);
         const usesImages = sel.kind === 'nano' ? threadUsesImageInputs(msgs) : false;
+        const roleDescription = resolveRoleSystemPrompt(settings, meta?.activeRoleId);
         const initial = await buildSessionInitialPromptsAsync(settings, msgs, ctx, {
           attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
           resolveUserModelText: (m) => modelPromptTextFromUserMessage(m, t),
+          roleDescription,
         });
         const session = await createDriverSession({
           driverId: sel.kind as AiDriverId,
@@ -1079,7 +1228,7 @@ Model id: ${trimmedModelId}`,
         if (!cancelled) {
           lmRef.current = session;
           lmUsesImagesRef.current = usesImages;
-          setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
+          setModelUiName(composerChatLabelForEffectiveSelection(sel, settings, t));
           setDownloadPct(null);
         } else {
           session.destroy();
@@ -1096,9 +1245,9 @@ Model id: ${trimmedModelId}`,
       lmRef.current?.destroy();
       lmRef.current = null;
       lmUsesImagesRef.current = false;
-      setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
+      setModelUiName(composerChatLabelForEffectiveSelection(chatSelection, settingsDraft, t));
     };
-  }, [activeSessionId, chatAiUsable, chatSelection.kind, lang, settingsDraft, t]);
+  }, [activeSessionId, activeSessionRoleSign, chatAiUsable, chatSelection, lang, settingsDraft, t]);
 
   useEffect(
     () => () => {
@@ -1115,6 +1264,29 @@ Model id: ${trimmedModelId}`,
     await saveSessions(next);
     setSessions(next);
   }, []);
+
+  const persistSessionRole = useCallback(
+    (roleId: string | undefined) => {
+      if (!activeSessionId) return;
+      void (async () => {
+        const list = await loadSessions();
+        const next = list.map((s) => {
+          if (s.id !== activeSessionId) return s;
+          if (!roleId?.trim()) {
+            const { activeRoleId: _drop, ...rest } = s;
+            return rest;
+          }
+          return { ...s, activeRoleId: roleId.trim() };
+        });
+        await persistSessionMeta(next);
+        lmRef.current?.destroy();
+        lmRef.current = null;
+        lmUsesImagesRef.current = false;
+        setRoleMenuOpen(false);
+      })();
+    },
+    [activeSessionId, persistSessionMeta],
+  );
 
   const persistMessages = useCallback(async (sid: string, next: ChatMessage[]) => {
     await saveMessages(sid, next);
@@ -1254,34 +1426,42 @@ Model id: ${trimmedModelId}`,
     })();
   }, [pendingDeleteId, persistSessionMeta, sessions, t]);
 
-  const saveSettingsClick = useCallback(() => {
-    void (async () => {
-      const clamped: LocalSettings = {
-        ...settingsDraft,
-        chatTitleRefreshEveryUserMessages: Math.min(
-          500,
-          Math.max(
-            0,
-            Math.floor(
-              Number.isFinite(settingsDraft.chatTitleRefreshEveryUserMessages)
-                ? settingsDraft.chatTitleRefreshEveryUserMessages
-                : DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
-            ),
+  const clampSettingsDraftValues = useCallback((d: LocalSettings): LocalSettings => {
+    return {
+      ...d,
+      chatTitleRefreshEveryUserMessages: Math.min(
+        500,
+        Math.max(
+          0,
+          Math.floor(
+            Number.isFinite(d.chatTitleRefreshEveryUserMessages)
+              ? d.chatTitleRefreshEveryUserMessages
+              : DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
           ),
         ),
-        maxTextAttachmentMib: clampMaxTextAttachmentMib(settingsDraft.maxTextAttachmentMib),
-        maxImageAttachmentMib: clampMaxImageAttachmentMib(settingsDraft.maxImageAttachmentMib),
-        streamFirstChunkTimeoutSec: clampStreamFirstChunkTimeoutSec(settingsDraft.streamFirstChunkTimeoutSec),
-      };
-      await saveSettings(clamped);
-      setSettingsDraft(clamped);
+      ),
+      maxTextAttachmentMib: clampMaxTextAttachmentMib(d.maxTextAttachmentMib),
+      maxImageAttachmentMib: clampMaxImageAttachmentMib(d.maxImageAttachmentMib),
+      streamFirstChunkTimeoutSec: clampStreamFirstChunkTimeoutSec(d.streamFirstChunkTimeoutSec),
+    };
+  }, []);
+
+  const persistSettingsDraft = useCallback(async () => {
+    const clamped = clampSettingsDraftValues(settingsDraft);
+    await saveSettings(clamped);
+    setSettingsDraft(clamped);
+  }, [clampSettingsDraftValues, settingsDraft]);
+
+  const saveSettingsClick = useCallback(() => {
+    void (async () => {
+      await persistSettingsDraft();
       setSettingsNotice(null);
       setSettingsOpen(false);
       lmRef.current?.destroy();
       lmRef.current = null;
       lmUsesImagesRef.current = false;
     })();
-  }, [settingsDraft]);
+  }, [persistSettingsDraft]);
 
   const resetToFreshSingleChat = useCallback((): Promise<void> => {
     return (async () => {
@@ -1330,7 +1510,7 @@ Model id: ${trimmedModelId}`,
         systemAiId: undefined,
         openAiConfig: undefined,
         autoAliasExternalModel: true,
-        systemPrompt: '',
+        aiRoles: [],
         preferredName: '',
         chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
         maxTextAttachmentMib: DEFAULT_MAX_TEXT_ATTACHMENT_MIB,
@@ -1594,11 +1774,16 @@ Model id: ${trimmedModelId}`,
         }
         lmRef.current = null;
         lmUsesImagesRef.current = false;
-        setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
+        const sessReset = sessions.find((s) => s.id === activeSessionIdRef.current);
+        const effReset = resolveEffectiveChatSelection(settingsDraft, sessReset?.activeRoleId);
+        setModelUiName(composerChatLabelForEffectiveSelection(effReset, settingsDraft, t));
       }
 
       const settings = await loadSettings();
-      const chatSel = resolveSelection(settings, 'chat');
+      const sessionList = await loadSessions();
+      const sessMeta = sessionList.find((s) => s.id === sessionId);
+      const roleDescription = resolveRoleSystemPrompt(settings, sessMeta?.activeRoleId);
+      const chatSel = resolveEffectiveChatSelection(settings, sessMeta?.activeRoleId);
       if (chatSel.kind === 'none') {
         throw new Error('error.noLm');
       }
@@ -1606,7 +1791,7 @@ Model id: ${trimmedModelId}`,
       await persistMessages(sessionId, nextMsgs);
 
       const assistantId = makeId();
-      const assistantHeading = chatAiComposerDisplayLabel(chatSel, settings, t);
+      const assistantHeading = composerChatLabelForEffectiveSelection(chatSel, settings, t);
       const assistantShell: ChatMessage = {
         id: assistantId,
         role: 'assistant',
@@ -1650,6 +1835,7 @@ Model id: ${trimmedModelId}`,
           const initial = await buildSessionInitialPromptsAsync(settings, prior, ctx, {
             attachmentsOnlyPrompt: t('chat.internal.attachmentsOnlyBody'),
             resolveUserModelText: (m) => modelPromptTextFromUserMessage(m, t),
+            roleDescription,
           });
           const session = await createDriverSession({
             driverId: chatSel.kind,
@@ -1671,7 +1857,7 @@ Model id: ${trimmedModelId}`,
           });
           lmRef.current = session;
           lmUsesImagesRef.current = needsMm;
-          setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
+          setModelUiName(composerChatLabelForEffectiveSelection(chatSel, settings, t));
           setDownloadPct(null);
         }
         const session = lmRef.current;
@@ -1850,7 +2036,7 @@ Model id: ${trimmedModelId}`,
         setDownloadPct(null);
       }
     },
-    [lang, persistMessages, t],
+    [lang, persistMessages, sessions, settingsDraft, t],
   );
 
   const send = useCallback(async () => {
@@ -2135,28 +2321,264 @@ Model id: ${trimmedModelId}`,
     }
   }, [settingsOpen]);
 
-  const refineSystemPromptWithAi = useCallback(async () => {
-    if (busy || refiningSystemPrompt || systemSelection.kind === 'none' || !systemAiUsable) return;
+  const closeRoleEditor = useCallback(() => {
+    refineAbortRef.current?.abort();
+    refineAbortRef.current = null;
+    roleSandboxAbortRef.current?.abort();
+    roleSandboxAbortRef.current = null;
+    setGeneratingRoleHint(false);
+    setRoleSandboxBusy(false);
+    setAiPickerTarget((cur) => (cur === 'role' ? null : cur));
+    setAiPickerRoleId(null);
+    setAiPickerSearch('');
+    setAiPickerFilter('all');
+    setRoleEditorOpenId((openId) => {
+      if (openId) {
+        setSettingsDraft((d) => {
+          const r = d.aiRoles.find((x) => x.id === openId);
+          if (r && !r.name.trim() && !r.description.trim()) {
+            return { ...d, aiRoles: d.aiRoles.filter((x) => x.id !== openId) };
+          }
+          return d;
+        });
+      }
+      return null;
+    });
     setSettingsRefineError(null);
+  }, []);
+
+  const removeRoleById = useCallback((id: string) => {
+    setSettingsDraft((d) => ({ ...d, aiRoles: d.aiRoles.filter((r) => r.id !== id) }));
+    setRoleEditorOpenId((open) => (open === id ? null : open));
     setSettingsNotice(null);
-    setRefiningSystemPrompt(true);
+    setSettingsRefineError(null);
+  }, []);
+
+  const editingRoleForWindow = useMemo(
+    () => (roleEditorOpenId ? settingsDraft.aiRoles.find((r) => r.id === roleEditorOpenId) : undefined),
+    [roleEditorOpenId, settingsDraft.aiRoles],
+  );
+
+  useEffect(() => {
+    if (!roleEditorOpenId) return;
+    if (!settingsDraft.aiRoles.some((r) => r.id === roleEditorOpenId)) {
+      setRoleEditorOpenId(null);
+    }
+  }, [roleEditorOpenId, settingsDraft.aiRoles]);
+
+  useEffect(() => {
+    if (!roleMenuOpen) return;
+    const onDoc = (ev: MouseEvent) => {
+      const n = ev.target as Node;
+      if (
+        roleMenuDesktopRef.current?.contains(n) ||
+        roleMenuMobileRef.current?.contains(n) ||
+        roleMenuRailRef.current?.contains(n)
+      ) {
+        return;
+      }
+      setRoleMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [roleMenuOpen]);
+
+  const refineRoleDescriptionWithAi = useCallback(
+    async (roleId: string) => {
+      if (busy || refiningRoleId || systemSelection.kind === 'none' || !systemAiUsable) return;
+      const roleRow = settingsDraft.aiRoles.find((r) => r.id === roleId);
+      if (!roleRow) return;
+      setSettingsRefineError(null);
+      setSettingsNotice(null);
+      setRefiningRoleId(roleId);
+      const ac = new AbortController();
+      refineAbortRef.current = ac;
+      let session: LanguageModel | null = null;
+      try {
+        const draft = roleRow.description.trim();
+        const instruction = t('settings.roleDescriptionRefine.instruction');
+        const userPrompt = `${instruction}\n\n--- Current draft ---\n${draft || '(empty)'}\n---`;
+        session = await createDriverSession({
+          driverId: systemSelection.kind,
+          settings:
+            systemSelection.kind === 'openai'
+              ? { ...settingsDraft, openAiConfig: { ...settingsDraft.openAiConfig!, modelId: systemSelection.modelId } }
+              : settingsDraft,
+          create: { ...LM_CORE },
+        });
+        let acc = '';
+        const stream = session.promptStreaming(userPrompt, { signal: ac.signal });
+        await consumeTextStream(
+          stream,
+          (chunk) => {
+            acc += chunk;
+          },
+          ac.signal,
+        );
+        let cleaned = acc.trim();
+        if (cleaned.startsWith('```')) {
+          cleaned = cleaned
+            .replace(/^```[a-zA-Z]*\n?/, '')
+            .replace(/\n?```\s*$/, '')
+            .trim();
+        }
+        setSettingsDraft((d) => ({
+          ...d,
+          aiRoles: d.aiRoles.map((r) => (r.id === roleId ? { ...r, description: cleaned } : r)),
+        }));
+        setSettingsNotice(t('settings.refineDone'));
+      } catch (e) {
+        const aborted =
+          ac.signal.aborted ||
+          (e instanceof DOMException && e.name === 'AbortError') ||
+          (e instanceof Error && e.name === 'AbortError');
+        if (!aborted) {
+          console.error('[Minerva] Role description refine failed', e);
+          setSettingsRefineError(
+            isBrowserPromptInputTooLargeError(e) ? t('error.promptInputTooLarge') : t('settings.refineFailed'),
+          );
+        }
+      } finally {
+        if (refineAbortRef.current === ac) refineAbortRef.current = null;
+        session?.destroy();
+        setRefiningRoleId(null);
+      }
+    },
+    [busy, refiningRoleId, settingsDraft, systemAiUsable, systemSelection.kind, systemSelectionModelId, t],
+  );
+
+  useEffect(() => {
+    setRoleEditorHintText('');
+    setRoleSandboxPrompt('');
+    setRoleSandboxReply('');
+    setRoleSandboxBusy(false);
+    roleSandboxAbortRef.current?.abort();
+    roleSandboxAbortRef.current = null;
+  }, [roleEditorOpenId]);
+
+  const generateRoleFromHintWithAi = useCallback(
+    async (roleId: string) => {
+      if (busy || generatingRoleHint || refiningRoleId || systemSelection.kind === 'none' || !systemAiUsable) return;
+      const hint = roleEditorHintText.trim();
+      if (!hint) return;
+      setSettingsRefineError(null);
+      setSettingsNotice(null);
+      setGeneratingRoleHint(true);
+      const ac = new AbortController();
+      refineAbortRef.current = ac;
+      let session: LanguageModel | null = null;
+      try {
+        const instruction = t('settings.roles.generateFromHintInstruction');
+        const userPrompt = `${instruction}\n\n--- User phrase ---\n${hint}\n---`;
+        session = await createDriverSession({
+          driverId: systemSelection.kind,
+          settings:
+            systemSelection.kind === 'openai'
+              ? { ...settingsDraft, openAiConfig: { ...settingsDraft.openAiConfig!, modelId: systemSelection.modelId } }
+              : settingsDraft,
+          create: { ...LM_CORE },
+        });
+        let acc = '';
+        const stream = session.promptStreaming(userPrompt, { signal: ac.signal });
+        await consumeTextStream(
+          stream,
+          (chunk) => {
+            acc += chunk;
+          },
+          ac.signal,
+        );
+        const parsed = parseRoleHintAiPayload(acc);
+        if (!parsed) {
+          setSettingsRefineError(t('settings.roles.generateFromHintFailed'));
+          return;
+        }
+        setSettingsDraft((d) => ({
+          ...d,
+          aiRoles: d.aiRoles.map((r) =>
+            r.id === roleId
+              ? {
+                  ...r,
+                  name: parsed.name.trim() ? parsed.name.trim() : r.name,
+                  description: parsed.description.trim() ? parsed.description.trim() : r.description,
+                }
+              : r,
+          ),
+        }));
+        setSettingsNotice(t('settings.refineDone'));
+      } catch (e) {
+        const aborted =
+          ac.signal.aborted ||
+          (e instanceof DOMException && e.name === 'AbortError') ||
+          (e instanceof Error && e.name === 'AbortError');
+        if (!aborted) {
+          console.error('[Minerva] Role hint generation failed', e);
+          setSettingsRefineError(
+            isBrowserPromptInputTooLargeError(e) ? t('error.promptInputTooLarge') : t('settings.roles.generateFromHintFailed'),
+          );
+        }
+      } finally {
+        if (refineAbortRef.current === ac) refineAbortRef.current = null;
+        session?.destroy();
+        setGeneratingRoleHint(false);
+      }
+    },
+    [
+      busy,
+      generatingRoleHint,
+      refiningRoleId,
+      roleEditorHintText,
+      settingsDraft,
+      systemAiUsable,
+      systemSelection.kind,
+      systemSelectionModelId,
+      t,
+    ],
+  );
+
+  const runRoleSandboxTest = useCallback(async () => {
+    const role = editingRoleForWindow;
+    if (!role || roleSandboxBusy) return;
+    const prompt = roleSandboxPrompt.trim();
+    if (!prompt) return;
+    const sel = resolveEffectiveChatSelection(settingsDraft, role.id);
+    if (sel.kind === 'none') return;
+    const usable =
+      sel.kind === 'nano'
+        ? nanoLmRuntimeOk
+        : Boolean(settingsDraft.openAiConfig?.baseUrl?.trim() && sel.modelId.trim());
+    if (!usable) return;
+
+    roleSandboxAbortRef.current?.abort();
     const ac = new AbortController();
-    refineAbortRef.current = ac;
+    roleSandboxAbortRef.current = ac;
+    setRoleSandboxBusy(true);
+    setRoleSandboxReply('');
     let session: LanguageModel | null = null;
     try {
-      const draft = settingsDraft.systemPrompt.trim();
-      const instruction = t('settings.systemPromptRefine.instruction');
-      const userPrompt = `${instruction}\n\n--- Current draft ---\n${draft || '(empty)'}\n---`;
-      session = await createDriverSession({
-        driverId: systemSelection.kind,
-        settings:
-          systemSelection.kind === 'openai'
-            ? { ...settingsDraft, openAiConfig: { ...settingsDraft.openAiConfig!, modelId: systemSelection.modelId } }
-            : settingsDraft,
-        create: { ...LM_CORE },
+      const geo = await resolveApproximateLocation(2600);
+      const ctx = defaultSessionSystemContext(lang, geo);
+      const sysFull = buildSessionSystemContent(settingsDraft, ctx, {
+        roleDescription: role.description.trim(),
       });
+      session = await createDriverSession({
+        driverId: sel.kind,
+        settings:
+          sel.kind === 'openai'
+            ? { ...settingsDraft, openAiConfig: { ...settingsDraft.openAiConfig!, modelId: sel.modelId } }
+            : settingsDraft,
+        create: {
+          ...LM_CORE,
+          ...(sysFull.trim()
+            ? {
+                initialPrompts: [{ role: 'system', content: sysFull }] as NonNullable<
+                  LanguageModelCreateOptions['initialPrompts']
+                >,
+              }
+            : {}),
+        },
+      });
+      const stream = session.promptStreaming(prompt, { signal: ac.signal });
       let acc = '';
-      const stream = session.promptStreaming(userPrompt, { signal: ac.signal });
       await consumeTextStream(
         stream,
         (chunk) => {
@@ -2164,32 +2586,30 @@ Model id: ${trimmedModelId}`,
         },
         ac.signal,
       );
-      let cleaned = acc.trim();
-      if (cleaned.startsWith('```')) {
-        cleaned = cleaned
-          .replace(/^```[a-zA-Z]*\n?/, '')
-          .replace(/\n?```\s*$/, '')
-          .trim();
-      }
-      setSettingsDraft((d) => ({ ...d, systemPrompt: cleaned }));
-      setSettingsNotice(t('settings.refineDone'));
+      setRoleSandboxReply(acc.trim());
     } catch (e) {
       const aborted =
         ac.signal.aborted ||
         (e instanceof DOMException && e.name === 'AbortError') ||
         (e instanceof Error && e.name === 'AbortError');
       if (!aborted) {
-        console.error('[Minerva] System prompt refine failed', e);
-        setSettingsRefineError(
-          isBrowserPromptInputTooLargeError(e) ? t('error.promptInputTooLarge') : t('settings.refineFailed'),
-        );
+        console.error('[Minerva] Role sandbox failed', e);
+        setRoleSandboxReply(t('settings.roles.sandboxError'));
       }
     } finally {
-      if (refineAbortRef.current === ac) refineAbortRef.current = null;
       session?.destroy();
-      setRefiningSystemPrompt(false);
+      setRoleSandboxBusy(false);
+      if (roleSandboxAbortRef.current === ac) roleSandboxAbortRef.current = null;
     }
-  }, [busy, refiningSystemPrompt, settingsDraft, systemAiUsable, systemSelection.kind, systemSelectionModelId, t]);
+  }, [
+    editingRoleForWindow,
+    lang,
+    nanoLmRuntimeOk,
+    roleSandboxBusy,
+    roleSandboxPrompt,
+    settingsDraft,
+    t,
+  ]);
 
   const canSendMessage = useMemo(
     () =>
@@ -2748,6 +3168,52 @@ Model id: ${trimmedModelId}`,
                       {modelUiNameForPrompt}
                     </button>
                   </div>
+                  {activeSessionId ? (
+                  <div className="composer-mobile-chip composer-mobile-chip--role">
+                    <span className="composer-mobile-chip-label">{t('composer.role.mobileChip')}</span>
+                    <div className="composer-role-anchor" ref={roleMenuMobileRef}>
+                      <button
+                        type="button"
+                        className="composer-mobile-chip-value composer-role-chip-trigger"
+                        aria-expanded={roleMenuOpen}
+                        aria-haspopup="menu"
+                        onClick={() => setRoleMenuOpen((o) => !o)}
+                        title={t('composer.role.menuAria')}
+                      >
+                        {activeRoleLabelShort}
+                      </button>
+                      {roleMenuOpen ? (
+                        <div
+                          className="composer-role-popover"
+                          role="menu"
+                          aria-label={t('composer.role.menuAria')}
+                        >
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={`composer-role-option${!activeSession?.activeRoleId ? ' composer-role-option--active' : ''}`}
+                            onClick={() => persistSessionRole(undefined)}
+                          >
+                            {t('roles.none')}
+                          </button>
+                          {settingsDraft.aiRoles.map((r) => (
+                            <button
+                              key={r.id}
+                              type="button"
+                              role="menuitem"
+                              className={`composer-role-option${
+                                activeSession?.activeRoleId === r.id ? ' composer-role-option--active' : ''
+                              }`}
+                              onClick={() => persistSessionRole(r.id)}
+                            >
+                              {truncateComposerAiName(r.name.trim() || t('roles.unnamed'), 36)}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  ) : null}
                   {settingsDraft.preferredName.trim() ? (
                     <div className="composer-mobile-chip composer-mobile-chip--you">
                       <span className="composer-mobile-chip-label">{t('composer.mobileChipYou')}</span>
@@ -2774,8 +3240,70 @@ Model id: ${trimmedModelId}`,
                         </button>
                       </span>
                     </span>
+                    {activeSessionId ? (
+                    <div className="composer-role-row">
+                      <div className="composer-role-anchor" ref={roleMenuDesktopRef}>
+                        <button
+                          type="button"
+                          className="composer-role-desktop-trigger"
+                          aria-expanded={roleMenuOpen}
+                          aria-haspopup="menu"
+                          onClick={() => setRoleMenuOpen((o) => !o)}
+                          title={t('composer.role.menuAria')}
+                        >
+                          <span className="composer-role-desktop-label">{t('composer.role.rowLabel')}</span>
+                          <span className="composer-role-desktop-value">{activeRoleLabelShort}</span>
+                        </button>
+                        {roleMenuOpen ? (
+                          <div
+                            className="composer-role-popover"
+                            role="menu"
+                            aria-label={t('composer.role.menuAria')}
+                          >
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className={`composer-role-option${!activeSession?.activeRoleId ? ' composer-role-option--active' : ''}`}
+                              onClick={() => persistSessionRole(undefined)}
+                            >
+                              {t('roles.none')}
+                            </button>
+                            {settingsDraft.aiRoles.map((r) => (
+                              <button
+                                key={r.id}
+                                type="button"
+                                role="menuitem"
+                                className={`composer-role-option${
+                                  activeSession?.activeRoleId === r.id ? ' composer-role-option--active' : ''
+                                }`}
+                                onClick={() => persistSessionRole(r.id)}
+                              >
+                                {truncateComposerAiName(r.name.trim() || t('roles.unnamed'), 36)}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    ) : null}
                   </div>
                   <div className="composer-rail" role="toolbar" aria-label={t('composer.toolbarAria')}>
+                    {activeSessionId ? (
+                      <div className="composer-role-rail-slot" ref={roleMenuRailRef}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-icon composer-rail-btn composer-role-rail-btn"
+                          aria-expanded={roleMenuOpen}
+                          aria-haspopup="menu"
+                          disabled={busy}
+                          onClick={() => setRoleMenuOpen((o) => !o)}
+                          title={t('composer.role.railAria')}
+                          aria-label={t('composer.role.railAria')}
+                        >
+                          <IconRoleMasks size={17} />
+                        </button>
+                      </div>
+                    ) : null}
                     {chatAiUsable ? (
                       <button
                         type="button"
@@ -2954,7 +3482,11 @@ Model id: ${trimmedModelId}`,
         maximizeAriaLabel={t('settings.window.maximize')}
         restoreAriaLabel={t('settings.window.restore')}
         mobileBackAriaLabel={t('dialog.back')}
-        onClose={() => setSettingsOpen(false)}
+        closeOnEscape={roleEditorOpenId === null}
+        onClose={() => {
+          closeRoleEditor();
+          setSettingsOpen(false);
+        }}
         width={760}
         height={680}
         minWidth={650}
@@ -3204,34 +3736,81 @@ Model id: ${trimmedModelId}`,
               {settingsSection === 'system' ? (
                 <>
                   <h3 className="settings-vscode-pane-title">{t('settings.sectionSystem')}</h3>
-                  <div className="field">
-                    <div className="field-label-row">
-                      <label htmlFor="minerva-sys">{t('settings.systemPrompt')}</label>
-                      <button
-                        type="button"
-                        className="btn-ai-refine"
-                        disabled={busy || refiningSystemPrompt}
-                        onClick={() => void refineSystemPromptWithAi()}
-                        title={t('settings.refineWithAi')}
-                        aria-label={t('settings.refineWithAi')}
-                      >
-                        <AiActionIcon size={16} />
-                        <span>{refiningSystemPrompt ? t('settings.refining') : t('settings.refineWithAi')}</span>
-                      </button>
-                    </div>
-                    <textarea
-                      id="minerva-sys"
-                      className="admin-textarea"
-                      rows={8}
-                      value={settingsDraft.systemPrompt}
-                      onChange={(e) => {
-                        setSettingsDraft((d) => ({ ...d, systemPrompt: e.target.value }));
+                  <p className="hint">{t('settings.roles.help')}</p>
+                  <div className="settings-roles-picker-list openai-lm-model-picker-list" role="list">
+                    {settingsDraft.aiRoles.length === 0 ? (
+                      <div className="openai-lm-model-list-empty">{t('settings.roles.listEmpty')}</div>
+                    ) : (
+                      settingsDraft.aiRoles.map((role: AiRole) => (
+                        <div key={role.id} className="settings-roles-list-row" role="listitem">
+                          <button
+                            type="button"
+                            className="settings-roles-list-main-btn"
+                            onClick={() => {
+                              setRoleEditorOpenId(role.id);
+                              setSettingsRefineError(null);
+                            }}
+                          >
+                            <span className="settings-roles-list-title">
+                              {role.name.trim() || t('roles.unnamed')}
+                            </span>
+                            {role.description.trim() ? (
+                              <span className="settings-roles-list-desc">{role.description.trim()}</span>
+                            ) : null}
+                            {role.chatAiModelKey?.trim() &&
+                            parseAiModelKey(role.chatAiModelKey.trim()).kind !== 'none' ? (
+                              <span className="settings-roles-list-meta">
+                                {aiSelectionSettingsLabel(parseAiModelKey(role.chatAiModelKey.trim()), t)}
+                              </span>
+                            ) : null}
+                          </button>
+                          <div className="settings-roles-list-actions chat-dialog-row-actions-icons">
+                            <button
+                              type="button"
+                              className="chat-dialog-icon-btn chat-dialog-icon-btn-summary"
+                              onClick={() => {
+                                setRoleEditorOpenId(role.id);
+                                setSettingsRefineError(null);
+                              }}
+                              title={t('settings.roles.editAria')}
+                              aria-label={t('settings.roles.editAria')}
+                            >
+                              <IconEditMessage size={16} />
+                            </button>
+                            <button
+                              type="button"
+                              className="chat-dialog-icon-btn chat-dialog-icon-btn-danger"
+                              onClick={() => {
+                                setPendingDeleteRoleId(role.id);
+                                setConfirmDeleteRoleOpen(true);
+                              }}
+                              title={t('settings.roles.removeAria')}
+                              aria-label={t('settings.roles.removeAria')}
+                            >
+                              <span aria-hidden>×</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="field settings-roles-add-field">
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() => {
+                        const id = newAiRoleId();
+                        setSettingsDraft((d) => ({
+                          ...d,
+                          aiRoles: [...d.aiRoles, { id, name: '', description: '' }],
+                        }));
+                        setRoleEditorOpenId(id);
                         setSettingsNotice(null);
                         setSettingsRefineError(null);
                       }}
-                      placeholder={t('settings.systemPromptPlaceholder')}
-                    />
-                    <p className="hint">{t('settings.systemPromptHelp')}</p>
+                    >
+                      {t('settings.roles.add')}
+                    </button>
                   </div>
                 </>
               ) : null}
@@ -3468,13 +4047,230 @@ Model id: ${trimmedModelId}`,
         </div>
       </DraggableWindow>
 
+      <DraggableWindow
+        open={Boolean(editingRoleForWindow)}
+        title={
+          editingRoleForWindow?.name.trim()
+            ? editingRoleForWindow.name.trim()
+            : t('settings.roles.editTitle')
+        }
+        closeAriaLabel={t('dialog.close')}
+        maximizeAriaLabel={t('settings.window.maximize')}
+        restoreAriaLabel={t('settings.window.restore')}
+        mobileBackAriaLabel={t('dialog.back')}
+        onClose={closeRoleEditor}
+        width={560}
+        height={560}
+        minWidth={400}
+        minHeight={440}
+        variant="solid"
+      >
+        {editingRoleForWindow ? (
+          <div className="dialog-fields settings-dialog-fields settings-dialog-fields--modal settings-dialog-root settings-dialog-root--window role-editor-window-body">
+            {settingsRefineError ? <p className="settings-dialog-error">{settingsRefineError}</p> : null}
+            <div className="role-editor-window-scroll">
+              <div className="field">
+                <label htmlFor="minerva-role-editor-name">{t('settings.roles.name')}</label>
+                <input
+                  id="minerva-role-editor-name"
+                  type="text"
+                  autoComplete="off"
+                  value={editingRoleForWindow.name}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const rid = editingRoleForWindow.id;
+                    setSettingsDraft((d) => ({
+                      ...d,
+                      aiRoles: d.aiRoles.map((r) => (r.id === rid ? { ...r, name: v } : r)),
+                    }));
+                    setSettingsNotice(null);
+                    setSettingsRefineError(null);
+                  }}
+                  placeholder={t('settings.roles.name')}
+                />
+              </div>
+              <div className="field">
+                <div className="field-label-row">
+                  <label htmlFor="minerva-role-editor-desc">{t('settings.roles.description')}</label>
+                  <button
+                    type="button"
+                    className="btn-ai-refine"
+                    disabled={busy || refiningRoleId !== null || generatingRoleHint}
+                    onClick={() => void refineRoleDescriptionWithAi(editingRoleForWindow.id)}
+                    title={t('settings.refineWithAi')}
+                    aria-label={t('settings.refineWithAi')}
+                  >
+                    <AiActionIcon size={16} />
+                    <span>
+                      {refiningRoleId === editingRoleForWindow.id
+                        ? t('settings.refining')
+                        : t('settings.refineWithAi')}
+                    </span>
+                  </button>
+                </div>
+                <textarea
+                  id="minerva-role-editor-desc"
+                  className="admin-textarea role-editor-desc-textarea"
+                  rows={6}
+                  value={editingRoleForWindow.description}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const rid = editingRoleForWindow.id;
+                    setSettingsDraft((d) => ({
+                      ...d,
+                      aiRoles: d.aiRoles.map((r) => (r.id === rid ? { ...r, description: v } : r)),
+                    }));
+                    setSettingsNotice(null);
+                    setSettingsRefineError(null);
+                  }}
+                  placeholder={t('settings.roles.descriptionPlaceholder')}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="minerva-role-chat-ai-trigger">{t('settings.roles.chatAiLabel')}</label>
+                <button
+                  id="minerva-role-chat-ai-trigger"
+                  type="button"
+                  className="openai-lm-model-trigger"
+                  aria-label={t('settings.roles.chatAiSelectAria')}
+                  title={t('settings.roles.chatAiHelp')}
+                  onClick={() => {
+                    setAiPickerRoleId(editingRoleForWindow.id);
+                    setAiPickerSearch('');
+                    setAiPickerFilter('all');
+                    setAiPickerTarget('role');
+                    void refreshExternalModels();
+                  }}
+                >
+                  <span className="openai-lm-model-trigger-label">
+                    {roleEditorChatModelTriggerLabel(editingRoleForWindow, settingsDraft, t)}
+                  </span>
+                </button>
+              </div>
+              <div className="field role-editor-hint-field">
+                <div className="field-label-row">
+                  <label htmlFor="minerva-role-editor-hint">{t('settings.roles.hintLabel')}</label>
+                  <button
+                    type="button"
+                    className="btn-ai-refine"
+                    disabled={
+                      busy ||
+                      generatingRoleHint ||
+                      refiningRoleId !== null ||
+                      systemSelection.kind === 'none' ||
+                      !systemAiUsable ||
+                      !roleEditorHintText.trim()
+                    }
+                    onClick={() => void generateRoleFromHintWithAi(editingRoleForWindow.id)}
+                    title={t('settings.roles.generateFromHint')}
+                    aria-label={t('settings.roles.generateFromHintAria')}
+                  >
+                    <AiActionIcon size={16} />
+                    <span>
+                      {generatingRoleHint ? t('settings.refining') : t('settings.roles.generateFromHint')}
+                    </span>
+                  </button>
+                </div>
+                <input
+                  id="minerva-role-editor-hint"
+                  type="text"
+                  autoComplete="off"
+                  value={roleEditorHintText}
+                  title={t('settings.roles.hintHelp')}
+                  onChange={(e) => {
+                    setRoleEditorHintText(e.target.value);
+                    setSettingsRefineError(null);
+                  }}
+                  placeholder={t('settings.roles.hintPlaceholder')}
+                />
+              </div>
+              <details className="role-editor-sandbox-details">
+                <summary>{t('settings.roles.sandboxSectionSummary')}</summary>
+                <div className="field role-editor-sandbox">
+                  <label htmlFor="minerva-role-sandbox-prompt" className="role-editor-sandbox-inline-label">
+                    {t('settings.roles.sandboxTitle')}
+                  </label>
+                  <textarea
+                    id="minerva-role-sandbox-prompt"
+                    className="admin-textarea role-sandbox-prompt-textarea"
+                    rows={3}
+                    value={roleSandboxPrompt}
+                    onChange={(e) => setRoleSandboxPrompt(e.target.value)}
+                    placeholder={t('settings.roles.sandboxPromptPlaceholder')}
+                    disabled={roleSandboxBusy}
+                  />
+                  <div className="role-sandbox-actions">
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      disabled={
+                        roleSandboxBusy ||
+                        !roleSandboxPrompt.trim() ||
+                        resolveEffectiveChatSelection(settingsDraft, editingRoleForWindow.id).kind === 'none' ||
+                        (resolveEffectiveChatSelection(settingsDraft, editingRoleForWindow.id).kind === 'nano'
+                          ? !nanoLmRuntimeOk
+                          : !settingsDraft.openAiConfig?.baseUrl?.trim())
+                      }
+                      onClick={() => void runRoleSandboxTest()}
+                    >
+                      {roleSandboxBusy ? t('settings.roles.sandboxSending') : t('settings.roles.sandboxSend')}
+                    </button>
+                    {roleSandboxBusy ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => roleSandboxAbortRef.current?.abort()}
+                      >
+                        {t('settings.roles.sandboxStop')}
+                      </button>
+                    ) : null}
+                  </div>
+                  <textarea
+                    id="minerva-role-sandbox-reply"
+                    className="admin-textarea role-sandbox-reply-textarea"
+                    readOnly
+                    rows={5}
+                    value={roleSandboxReply}
+                    placeholder={t('settings.roles.sandboxReplyPlaceholder')}
+                  />
+                </div>
+              </details>
+            </div>
+            <div className="settings-dialog-footer role-editor-footer">
+              <div className="admin-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() =>
+                    void persistSettingsDraft().then(() => {
+                      setSettingsNotice(t('settings.saved'));
+                      closeRoleEditor();
+                    })
+                  }
+                >
+                  {t('settings.save')}
+                </button>
+                {settingsNotice ? <span className="admin-test-msg">{settingsNotice}</span> : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </DraggableWindow>
+
       <DraggableDialog
         open={aiPickerTarget !== null}
-        title={aiPickerTarget === 'system' ? t('settings.ai.system') : t('settings.ai.chat')}
+        title={
+          aiPickerTarget === 'system'
+            ? t('settings.ai.system')
+            : aiPickerTarget === 'role'
+              ? t('settings.roles.chatAiPickerTitle')
+              : t('settings.ai.chat')
+        }
         closeAriaLabel={t('dialog.close')}
         mobileBackAriaLabel={t('dialog.back')}
         onClose={() => {
           setAiPickerTarget(null);
+          setAiPickerRoleId(null);
           setAiPickerSearch('');
           setAiPickerFilter('all');
         }}
@@ -3532,6 +4328,24 @@ Model id: ${trimmedModelId}`,
               className="openai-lm-model-option openai-lm-model-option--picker"
               onClick={() => {
                 if (!aiPickerTarget) return;
+                if (aiPickerTarget === 'role') {
+                  const rid = aiPickerRoleId;
+                  if (rid) {
+                    setSettingsDraft((d) => ({
+                      ...d,
+                      aiRoles: d.aiRoles.map((r) =>
+                        r.id === rid ? { ...r, chatAiModelKey: undefined } : r,
+                      ),
+                    }));
+                  }
+                  setAiPickerTarget(null);
+                  setAiPickerRoleId(null);
+                  setAiPickerSearch('');
+                  setAiPickerFilter('all');
+                  setSettingsNotice(null);
+                  setSettingsRefineError(null);
+                  return;
+                }
                 setSettingsDraft((d) => {
                   const next = withSelection(d, aiPickerTarget, { kind: 'none' });
                   if (aiPickerTarget === 'chat') {
@@ -3540,10 +4354,15 @@ Model id: ${trimmedModelId}`,
                   return next;
                 });
                 setAiPickerTarget(null);
+                setAiPickerRoleId(null);
+                setAiPickerSearch('');
+                setAiPickerFilter('all');
                 setSettingsNotice(null);
               }}
             >
-              <span className="openai-lm-model-option-label">{t('settings.ai.none')}</span>
+              <span className="openai-lm-model-option-label">
+                {aiPickerTarget === 'role' ? t('settings.roles.chatAiUseGlobal') : t('settings.ai.none')}
+              </span>
             </button>
             {filteredAiOptions.map((o) => (
               <button
@@ -3555,6 +4374,24 @@ Model id: ${trimmedModelId}`,
                 onClick={() => {
                   if (!aiPickerTarget) return;
                   const parsed = parseAiModelKey(o.key);
+                  if (aiPickerTarget === 'role') {
+                    const rid = aiPickerRoleId;
+                    if (rid) {
+                      setSettingsDraft((d) => ({
+                        ...d,
+                        aiRoles: d.aiRoles.map((r) =>
+                          r.id === rid ? { ...r, chatAiModelKey: o.key } : r,
+                        ),
+                      }));
+                    }
+                    setAiPickerTarget(null);
+                    setAiPickerRoleId(null);
+                    setAiPickerSearch('');
+                    setAiPickerFilter('all');
+                    setSettingsNotice(null);
+                    setSettingsRefineError(null);
+                    return;
+                  }
                   const next = withSelection(settingsDraft, aiPickerTarget, parsed);
                   setSettingsDraft(next);
                   if (aiPickerTarget === 'chat') {
@@ -3564,12 +4401,15 @@ Model id: ${trimmedModelId}`,
                     void autoGenerateExternalAlias(next);
                   }
                   setAiPickerTarget(null);
+                  setAiPickerRoleId(null);
+                  setAiPickerSearch('');
+                  setAiPickerFilter('all');
                   setSettingsNotice(null);
                 }}
               >
                 <span className="openai-lm-model-option-label">
                   {o.label}
-                  {!o.available ? ' (no disponible)' : ''}
+                  {!o.available ? t('settings.ai.unavailableSuffix') : ''}
                 </span>
               </button>
             ))}
@@ -3622,6 +4462,25 @@ Model id: ${trimmedModelId}`,
         }}
         onConfirm={() => void runDeleteSession()}
         confirmLabel={t('chat.delete')}
+        cancelLabel={t('dialog.back')}
+      />
+      <MessageDialog
+        open={confirmDeleteRoleOpen}
+        variant="warning"
+        title={t('settings.roles.deleteConfirmTitle')}
+        message={t('settings.roles.deleteConfirmBody')}
+        closeAriaLabel={t('dialog.close')}
+        onClose={() => {
+          setConfirmDeleteRoleOpen(false);
+          setPendingDeleteRoleId(null);
+        }}
+        onConfirm={() => {
+          const id = pendingDeleteRoleId;
+          setConfirmDeleteRoleOpen(false);
+          setPendingDeleteRoleId(null);
+          if (id) removeRoleById(id);
+        }}
+        confirmLabel={t('settings.roles.deleteConfirmAction')}
         cancelLabel={t('dialog.back')}
       />
       <MessageDialog
@@ -3763,7 +4622,7 @@ Model id: ${trimmedModelId}`,
             }
             lmRef.current = null;
             lmUsesImagesRef.current = false;
-            setModelUiName(chatAiComposerDisplayLabel(resolveSelection(settingsDraft, 'chat'), settingsDraft, t));
+            setModelUiName(composerChatLabelForEffectiveSelection(chatSelection, settingsDraft, t));
             setBusy(false);
             setError(null);
             await persistMessages(sid, next);

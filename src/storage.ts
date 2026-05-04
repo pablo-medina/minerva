@@ -1,6 +1,7 @@
 import { DEFAULT_MAX_IMAGE_ATTACHMENT_MIB, DEFAULT_MAX_TEXT_ATTACHMENT_MIB } from './chatAttachmentConstants';
 import { detectBrowserLang } from './i18n';
-import type { AppLang, ChatAttachment, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
+import { LEGACY_MIGRATED_ROLE_ID, normalizeAiRolesArray } from './aiRoles';
+import type { AppLang, AiRole, ChatAttachment, ChatMessage, ChatSession, LocalSettings, ThemeMode } from './types';
 import { isChatTextAttachment } from './types';
 import { normalizeMaxImageAttachmentMibFromStored } from './imageAttachmentSettings';
 import { normalizeMaxTextAttachmentMibFromStored } from './textAttachmentSettings';
@@ -64,7 +65,7 @@ const defaultSettings = (): LocalSettings => ({
   systemAiId: undefined,
   openAiConfig: undefined,
   autoAliasExternalModel: true,
-  systemPrompt: '',
+  aiRoles: [],
   preferredName: '',
   chatTitleRefreshEveryUserMessages: DEFAULT_CHAT_TITLE_REFRESH_EVERY_USER_MESSAGES,
   maxTextAttachmentMib: DEFAULT_MAX_TEXT_ATTACHMENT_MIB,
@@ -143,8 +144,22 @@ export function normalizeAppSettingsRow(row: AppSettingsRow | null | undefined):
         typeof row.localSettings?.autoAliasExternalModel === 'boolean'
           ? row.localSettings.autoAliasExternalModel
           : true,
-      systemPrompt:
-        typeof row.localSettings?.systemPrompt === 'string' ? row.localSettings.systemPrompt : '',
+      aiRoles: ((): AiRole[] => {
+        const parsed = normalizeAiRolesArray(row.localSettings?.aiRoles);
+        if (parsed.length) return parsed;
+        const lsRaw = row.localSettings as unknown as Record<string, unknown> | undefined;
+        const legacyText = typeof lsRaw?.systemPrompt === 'string' ? lsRaw.systemPrompt.trim() : '';
+        if (legacyText) {
+          return [
+            {
+              id: LEGACY_MIGRATED_ROLE_ID,
+              name: 'Imported prompt',
+              description: legacyText,
+            },
+          ];
+        }
+        return [];
+      })(),
       preferredName:
         typeof row.localSettings?.preferredName === 'string' ? row.localSettings.preferredName : '',
       chatTitleRefreshEveryUserMessages: clampTitleInterval(

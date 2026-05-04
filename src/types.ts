@@ -58,6 +58,17 @@ export type ChatMessage = {
   assistantDisplayName?: string;
 };
 
+export type AiRole = {
+  id: string;
+  name: string;
+  /** Sent as the role-specific part of the session system preamble when this role is active. */
+  description: string;
+  /**
+   * Optional Chat AI override (`nano`, `openai:<model-id>`). When unset, the global Chat AI is used.
+   */
+  chatAiModelKey?: string;
+};
+
 export type ChatSession = {
   id: string;
   title: string;
@@ -65,6 +76,10 @@ export type ChatSession = {
   updatedAt: string;
   /** Denormalized from IndexedDB for sidebar filtering (synced when messages are saved). */
   hasUserMessage?: boolean;
+  /**
+   * Selected role from settings (`aiRoles`). When absent/empty, behaves like no extra instructions.
+   */
+  activeRoleId?: string;
 };
 
 export type LocalSettings = {
@@ -97,7 +112,8 @@ export type LocalSettings = {
   };
   /** If true, auto-generates external model alias with System AI on model change. */
   autoAliasExternalModel: boolean;
-  systemPrompt: string;
+  /** Named roles with optional instructions; replaces legacy `systemPrompt` (migrated on load). */
+  aiRoles: AiRole[];
   /** How the assistant should address the user (sent with the system prompt when a session starts). */
   preferredName: string;
   /**

@@ -77,11 +77,20 @@ function geoDirective(geo: SessionGeo): string {
   return `Approximate client-reported coordinates (browser geolocation, may be coarse or stale): latitude ${geo.lat.toFixed(5)}, longitude ${geo.lon.toFixed(5)}. Treat as uncertain context only; never assert an exact real-world address.`;
 }
 
+export type BuildSessionSystemOptions = {
+  /** Role-specific instructions (replaces legacy global system prompt). */
+  roleDescription?: string;
+};
+
 /**
  * Builds the full system preamble: UI language, date/time, optional geo, optional
- * preferred name, then the user's optional system prompt.
+ * preferred name, then optional role instructions.
  */
-export function buildSessionSystemContent(settings: LocalSettings, ctx: SessionSystemContext): string {
+export function buildSessionSystemContent(
+  settings: LocalSettings,
+  ctx: SessionSystemContext,
+  options?: BuildSessionSystemOptions,
+): string {
   const parts: string[] = [languageDirective(ctx.appLang), dateTimeDirective(ctx.appLang, ctx.now, ctx.timeZone)];
   if (ctx.geo) parts.push(geoDirective(ctx.geo));
 
@@ -96,7 +105,7 @@ export function buildSessionSystemContent(settings: LocalSettings, ctx: SessionS
     );
   }
 
-  const sys = settings.systemPrompt.trim();
+  const sys = (options?.roleDescription ?? '').trim();
   if (sys) parts.push(sys);
 
   parts.push(
@@ -114,6 +123,8 @@ export type BuildSessionInitialPromptsOptions = {
    * like “Attached n files…” is not sent to the model). Falls back to `message.content`.
    */
   resolveUserModelText?: (m: ChatMessage) => string;
+  /** Per-chat role instructions merged into the system preamble. */
+  roleDescription?: string;
 };
 
 export async function buildSessionInitialPromptsAsync(
@@ -122,7 +133,7 @@ export async function buildSessionInitialPromptsAsync(
   ctx: SessionSystemContext,
   opts: BuildSessionInitialPromptsOptions,
 ): Promise<LanguageModelCreateOptions['initialPrompts']> {
-  const sysTrim = buildSessionSystemContent(settings, ctx);
+  const sysTrim = buildSessionSystemContent(settings, ctx, { roleDescription: opts.roleDescription });
   const out: Array<LanguageModelSystemMessage | LanguageModelMessage> = [];
   if (sysTrim) {
     out.push({ role: 'system', content: sysTrim });

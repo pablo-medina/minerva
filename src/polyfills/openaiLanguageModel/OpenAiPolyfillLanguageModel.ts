@@ -51,7 +51,7 @@ export class OpenAiPolyfillLanguageModel extends EventTarget {
 
   readonly name: string;
   readonly topK = 0;
-  readonly temperature = 0;
+  readonly temperature: number;
   readonly contextUsage = 0;
   readonly contextWindow = 131_072;
   /** @deprecated */
@@ -68,6 +68,7 @@ export class OpenAiPolyfillLanguageModel extends EventTarget {
   ) {
     super();
     this.name = cfg.modelId;
+    this.temperature = cfg.temperature;
     this.messages = initialRows;
   }
 

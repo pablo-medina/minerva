@@ -5,8 +5,11 @@ import { isOpenAiLanguageModelPolyfillInstalled } from './detect';
 import { fetchOpenAiLmModelIds } from './openAiHttp';
 import {
   clearOpenAiLmPolyfillConfig,
+  DEFAULT_OPENAI_LM_TEMPERATURE,
   isOpenAiLmPolyfillConfigComplete,
   loadOpenAiLmPolyfillConfig,
+  MAX_OPENAI_LM_TEMPERATURE,
+  MIN_OPENAI_LM_TEMPERATURE,
   normalizeOpenAiLmBaseUrl,
   saveOpenAiLmPolyfillConfig,
 } from './storage';
@@ -62,6 +65,7 @@ export function OpenAiLmPolyfillSettingsForm({
   const [baseUrlInput, setBaseUrlInput] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [modelId, setModelId] = useState('');
+  const [temperature, setTemperature] = useState(DEFAULT_OPENAI_LM_TEMPERATURE);
   const [displayAlias, setDisplayAlias] = useState('');
   const [models, setModels] = useState<string[]>([]);
   const [modelsBusy, setModelsBusy] = useState(false);
@@ -78,6 +82,7 @@ export function OpenAiLmPolyfillSettingsForm({
     setBaseUrlInput(c.baseUrl.replace(/\/$/, ''));
     setApiKey(c.apiKey);
     setModelId(c.modelId);
+    setTemperature(c.temperature);
     setDisplayAlias(c.displayAlias ?? '');
   }, []);
 
@@ -98,7 +103,12 @@ export function OpenAiLmPolyfillSettingsForm({
         setModels([]);
         return;
       }
-      const ids = await fetchOpenAiLmModelIds({ baseUrl: base, apiKey: apiKey.trim(), modelId: modelId.trim() || 'x' });
+      const ids = await fetchOpenAiLmModelIds({
+        baseUrl: base,
+        apiKey: apiKey.trim(),
+        modelId: modelId.trim() || 'x',
+        temperature,
+      });
       setModels(ids);
     } catch (e) {
       setModelsError(
@@ -107,7 +117,7 @@ export function OpenAiLmPolyfillSettingsForm({
     } finally {
       setModelsBusy(false);
     }
-  }, [apiKey, baseUrlInput, modelId, t]);
+  }, [apiKey, baseUrlInput, modelId, t, temperature]);
 
   /** When the model popup opens, load the full list from the server (same as refresh). */
   useEffect(() => {
@@ -140,18 +150,19 @@ export function OpenAiLmPolyfillSettingsForm({
         setSaveError(t('settings.remoteLm.errorNeedModel'));
         return;
       }
-      saveOpenAiLmPolyfillConfig({ baseUrlInput, apiKey, modelId: mid, displayAlias });
+      saveOpenAiLmPolyfillConfig({ baseUrlInput, apiKey, modelId: mid, temperature, displayAlias });
       onSaved?.();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
     }
-  }, [apiKey, baseUrlInput, displayAlias, modelId, onSaved, t]);
+  }, [apiKey, baseUrlInput, displayAlias, modelId, onSaved, t, temperature]);
 
   const onClear = useCallback(() => {
     clearOpenAiLmPolyfillConfig();
     setBaseUrlInput('');
     setApiKey('');
     setModelId('');
+    setTemperature(DEFAULT_OPENAI_LM_TEMPERATURE);
     setDisplayAlias('');
     setModels([]);
     setModelsError(null);
@@ -241,6 +252,39 @@ export function OpenAiLmPolyfillSettingsForm({
           <IconChevronDown size={14} />
         </button>
         <p className="hint">{t('settings.remoteLm.modelPickerHint')}</p>
+      </div>
+      <div className="field">
+        <label htmlFor="minerva-remote-lm-temperature-slider">{t('settings.remoteLm.temperature')}</label>
+        <div className="settings-mib-control-row openai-lm-temperature-row">
+          <input
+            id="minerva-remote-lm-temperature-slider"
+            type="range"
+            min={MIN_OPENAI_LM_TEMPERATURE}
+            max={MAX_OPENAI_LM_TEMPERATURE}
+            step={0.05}
+            value={temperature}
+            aria-valuemin={MIN_OPENAI_LM_TEMPERATURE}
+            aria-valuemax={MAX_OPENAI_LM_TEMPERATURE}
+            aria-valuenow={temperature}
+            aria-valuetext={t('settings.remoteLm.temperatureValueAria').replace(
+              '{value}',
+              temperature.toFixed(2),
+            )}
+            onChange={(e) => {
+              setTemperature(Number(e.target.value));
+              setSaveError(null);
+            }}
+          />
+          <span className="openai-lm-temperature-value" aria-hidden="true">
+            {temperature.toFixed(2)}
+          </span>
+        </div>
+        <p className="hint">
+          {t('settings.remoteLm.temperatureHelp')
+            .replace('{default}', String(DEFAULT_OPENAI_LM_TEMPERATURE))
+            .replace('{min}', String(MIN_OPENAI_LM_TEMPERATURE))
+            .replace('{max}', String(MAX_OPENAI_LM_TEMPERATURE))}
+        </p>
       </div>
       <div className="field">
         <label htmlFor="minerva-remote-lm-display-alias">{t('settings.remoteLm.displayAlias')}</label>

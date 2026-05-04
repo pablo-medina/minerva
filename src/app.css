@@ -183,6 +183,21 @@
   gap: 0.5rem;
 }
 
+.openai-lm-temperature-row input[type='range'] {
+  flex: 1 1 140px;
+  min-width: 120px;
+  accent-color: var(--accent);
+}
+
+.openai-lm-temperature-value {
+  flex-shrink: 0;
+  min-width: 2.75rem;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-align: right;
+}
+
 .openai-lm-fetch-models-btn {
   display: inline-flex;
   align-items: center;

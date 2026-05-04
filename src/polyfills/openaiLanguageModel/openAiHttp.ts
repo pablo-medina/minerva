@@ -37,6 +37,7 @@ export async function* streamOpenAiChatCompletionDeltas(opts: {
       model: cfg.modelId,
       messages,
       stream: true,
+      temperature: cfg.temperature,
     }),
   });
 

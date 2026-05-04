@@ -5,11 +5,23 @@
  */
 const STORAGE_KEY = 'minerva.openaiLmPolyfill.v1';
 
+/** Default sampling temperature for OpenAI-compatible chat completions. */
+export const DEFAULT_OPENAI_LM_TEMPERATURE = 0.2;
+export const MIN_OPENAI_LM_TEMPERATURE = 0;
+export const MAX_OPENAI_LM_TEMPERATURE = 2;
+
+export function clampOpenAiLmTemperature(raw: unknown): number {
+  const n = typeof raw === 'number' && Number.isFinite(raw) ? raw : DEFAULT_OPENAI_LM_TEMPERATURE;
+  return Math.min(MAX_OPENAI_LM_TEMPERATURE, Math.max(MIN_OPENAI_LM_TEMPERATURE, n));
+}
+
 export type OpenAiLmPolyfillStored = {
   /** Normalized base including `/v1` (e.g. https://api.openai.com/v1). */
   baseUrl: string;
   apiKey: string;
   modelId: string;
+  /** Sampling temperature for chat completions (0–2). */
+  temperature: number;
   /** Optional short label for the composer and chat UI (overrides formatted model id). */
   displayAlias?: string;
 };
@@ -37,7 +49,8 @@ export function loadOpenAiLmPolyfillConfig(): OpenAiLmPolyfillStored | null {
     if (!baseUrl || !modelId) return null;
     const displayAliasRaw = typeof o.displayAlias === 'string' ? o.displayAlias.trim() : '';
     const displayAlias = displayAliasRaw ? displayAliasRaw : undefined;
-    return { baseUrl, apiKey, modelId, ...(displayAlias ? { displayAlias } : {}) };
+    const temperature = clampOpenAiLmTemperature(o.temperature);
+    return { baseUrl, apiKey, modelId, temperature, ...(displayAlias ? { displayAlias } : {}) };
   } catch {
     return null;
   }
@@ -51,13 +64,15 @@ export function saveOpenAiLmPolyfillConfig(next: {
   baseUrlInput: string;
   apiKey: string;
   modelId: string;
+  temperature: number;
   displayAlias?: string;
 }): OpenAiLmPolyfillStored {
   const baseUrl = normalizeOpenAiLmBaseUrl(next.baseUrlInput);
   const modelId = next.modelId.trim();
   const apiKey = next.apiKey.trim();
+  const temperature = clampOpenAiLmTemperature(next.temperature);
   const aliasTrim = (next.displayAlias ?? '').trim();
-  const row: OpenAiLmPolyfillStored = { baseUrl, apiKey, modelId };
+  const row: OpenAiLmPolyfillStored = { baseUrl, apiKey, modelId, temperature };
   if (aliasTrim) row.displayAlias = aliasTrim;
   if (typeof localStorage !== 'undefined') {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(row));

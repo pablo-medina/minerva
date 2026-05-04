@@ -120,6 +120,10 @@ Rules:
   'settings.remoteLm.modelListAria': 'Models from the server',
   'settings.remoteLm.modelPickerChoose': 'Choose a model…',
   'settings.remoteLm.modelPickerHint': 'Opens a popup; the model list loads automatically.',
+  'settings.remoteLm.temperature': 'Temperature',
+  'settings.remoteLm.temperatureHelp':
+    'Used for chat completions at your endpoint. Lower values are more deterministic. Default {default}; allowed range {min}–{max}.',
+  'settings.remoteLm.temperatureValueAria': 'Temperature {value}',
   'settings.remoteLm.displayAlias': 'Display name (optional)',
   'settings.remoteLm.displayAliasPlaceholder': 'External AI',
   'settings.remoteLm.displayAliasHelp':
@@ -439,6 +443,10 @@ Reglas:
   'settings.remoteLm.modelListAria': 'Modelos del servidor',
   'settings.remoteLm.modelPickerChoose': 'Elegí un modelo…',
   'settings.remoteLm.modelPickerHint': 'Se abre un panel; la lista de modelos se carga sola.',
+  'settings.remoteLm.temperature': 'Temperatura',
+  'settings.remoteLm.temperatureHelp':
+    'Se usa en las respuestas de chat de tu endpoint. Valores más bajos son más deterministas. Por defecto {default}; rango permitido {min}–{max}.',
+  'settings.remoteLm.temperatureValueAria': 'Temperatura {value}',
   'settings.remoteLm.displayAlias': 'Nombre visible (opcional)',
   'settings.remoteLm.displayAliasPlaceholder': 'External AI',
   'settings.remoteLm.displayAliasHelp':

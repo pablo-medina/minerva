@@ -107,6 +107,13 @@ import {
   modelPromptTextFromUserMessage,
   userMessageEditableText,
 } from './chatUserMessageDisplay';
+import { isOpenAiLanguageModelPolyfillInstalled } from './polyfills/openaiLanguageModel/detect';
+import { OpenAiLmPolyfillSettingsForm } from './polyfills/openaiLanguageModel/OpenAiLmPolyfillSettingsForm';
+import {
+  clearOpenAiLmPolyfillConfig,
+  isOpenAiLmPolyfillConfigComplete,
+  loadOpenAiLmPolyfillConfig,
+} from './polyfills/openaiLanguageModel/storage';
 
 function makeId(): string {
   try {
@@ -179,6 +186,18 @@ function IconPaperclip({ size = 18 }: { size?: number }) {
         strokeLinecap="round"
         strokeLinejoin="round"
         d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
+      />
+    </svg>
+  );
+}
+
+/** Material-style “arrow back” (filled), common on Android toolbars. */
+function IconArrowBackAndroid({ size = 22 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"
       />
     </svg>
   );
@@ -269,6 +288,8 @@ export function App() {
   const [lang, setLang] = useState<AppLang>(() => detectBrowserLang());
   const [theme, setTheme] = useState<ThemeMode>('dark');
   const [howToOpen, setHowToOpen] = useState(false);
+  /** Remote fallback gate: intro first, then advanced URL/model panel. */
+  const [showRemoteLmConfig, setShowRemoteLmConfig] = useState(false);
 
   const t = useMemo(() => createTranslator(lang), [lang]);
 
@@ -303,6 +324,12 @@ export function App() {
   useEffect(() => {
     void saveAppPrefsLang(lang);
   }, [lang]);
+
+  useEffect(() => {
+    if (gate === 'loading') {
+      setShowRemoteLmConfig(false);
+    }
+  }, [gate]);
 
   const howToChromeFlagsDialog = (
     <DraggableDialog
@@ -364,30 +391,84 @@ export function App() {
   }
 
   if (gate === 'blocked') {
+    const remoteLmSetup =
+      isOpenAiLanguageModelPolyfillInstalled() &&
+      !isOpenAiLmPolyfillConfigComplete(loadOpenAiLmPolyfillConfig());
     return (
       <>
         <div className="auth-screen">
-          <div className="auth-card">
-            <h1>{t('brand.name')}</h1>
-            <p>{t('gate.blocked')}</p>
-            <p className="hint">{t('gate.blockedHint')}</p>
-            <div className="minerva-how-to-wrap">
-              <button
-                type="button"
-                className="minerva-how-to-link minerva-how-to-link--prominent"
-                onClick={() => setHowToOpen(true)}
-              >
-                {t('howToEnableLink')}
-              </button>
+          <div className="auth-screen-stack">
+            <div className="auth-card">
+              {remoteLmSetup && showRemoteLmConfig ? (
+                <div className="auth-card-title-row auth-card-title-row--with-back">
+                  <button
+                    type="button"
+                    className="auth-remote-lm-back-btn"
+                    onClick={() => setShowRemoteLmConfig(false)}
+                    title={t('gate.remoteLmBack')}
+                    aria-label={t('gate.remoteLmBack')}
+                  >
+                    <IconArrowBackAndroid size={22} />
+                  </button>
+                  <h1>{t('brand.name')}</h1>
+                </div>
+              ) : (
+                <h1>{t('brand.name')}</h1>
+              )}
+              {remoteLmSetup ? (
+                showRemoteLmConfig ? (
+                  <OpenAiLmPolyfillSettingsForm
+                    t={t}
+                    variant="gate"
+                    onSaved={recheckGate}
+                    onGateRecheck={recheckGate}
+                  />
+                ) : (
+                  <>
+                    <p className="hint">{t('gate.remoteLmIntroBrief')}</p>
+                    <div className="auth-remote-lm-intro-actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={() => setShowRemoteLmConfig(true)}
+                      >
+                        {t('gate.remoteLmAdvanced')}
+                      </button>
+                      <button type="button" className="btn btn-outline" onClick={recheckGate}>
+                        {t('gate.retry')}
+                      </button>
+                    </div>
+                  </>
+                )
+              ) : (
+                <>
+                  <p>{t('gate.blocked')}</p>
+                  <p className="hint">{t('gate.blockedHint')}</p>
+                  <div className="minerva-how-to-wrap">
+                    <button
+                      type="button"
+                      className="minerva-how-to-link minerva-how-to-link--prominent"
+                      onClick={() => setHowToOpen(true)}
+                    >
+                      {t('howToEnableLink')}
+                    </button>
+                  </div>
+                  <div className="auth-card-retry-wrap">
+                    <button type="button" className="btn btn-primary" onClick={recheckGate}>
+                      {t('gate.retry')}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
-            <div className="auth-card-retry-wrap">
-              <button type="button" className="btn btn-primary" onClick={recheckGate}>
-                {t('gate.retry')}
-              </button>
-            </div>
+            {remoteLmSetup ? (
+              <footer className="auth-remote-fallback-footer">
+                <p className="hint auth-remote-fallback-legal">{t('gate.remoteLmLegalFooter')}</p>
+              </footer>
+            ) : null}
           </div>
         </div>
-        {howToChromeFlagsDialog}
+        {remoteLmSetup ? null : howToChromeFlagsDialog}
       </>
     );
   }
@@ -411,10 +492,19 @@ type MinervaChatAppProps = {
   t: ReturnType<typeof createTranslator>;
 };
 
-type SettingsSectionId = 'general' | 'profile' | 'system' | 'data' | 'files' | 'backup' | 'about';
+type SettingsSectionId =
+  | 'general'
+  | 'remoteModel'
+  | 'profile'
+  | 'system'
+  | 'data'
+  | 'files'
+  | 'backup'
+  | 'about';
 
 const SETTINGS_SECTION_IDS: SettingsSectionId[] = [
   'general',
+  'remoteModel',
   'profile',
   'system',
   'data',
@@ -427,6 +517,8 @@ function settingsSectionLabelKey(id: SettingsSectionId): string {
   switch (id) {
     case 'general':
       return 'settings.sectionGeneral';
+    case 'remoteModel':
+      return 'settings.sectionRemoteLm';
     case 'profile':
       return 'settings.sectionProfile';
     case 'system':
@@ -507,6 +599,16 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
 
   const nanoLmRuntimeOk = useMemo(() => languageModelSupported(), []);
 
+  const openRemoteLanguageModelSettings = useCallback(() => {
+    setChatsOpen(false);
+    if (isOpenAiLanguageModelPolyfillInstalled()) {
+      setSettingsSection('remoteModel');
+    } else {
+      setSettingsSection('general');
+    }
+    setSettingsOpen(true);
+  }, []);
+
   const lmRef = useRef<LanguageModel | null>(null);
   const lmUsesImagesRef = useRef(false);
   const refineAbortRef = useRef<AbortController | null>(null);
@@ -559,6 +661,17 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       setImageMibText(formatImageMibForField(settingsDraft.maxImageAttachmentMib));
     }
   }, [settingsDraft.maxImageAttachmentMib]);
+
+  /** API Emulation settings only exist when the OpenAI-compatible polyfill is active (no native Prompt API). */
+  useEffect(() => {
+    if (
+      settingsOpen &&
+      settingsSection === 'remoteModel' &&
+      !isOpenAiLanguageModelPolyfillInstalled()
+    ) {
+      setSettingsSection('general');
+    }
+  }, [settingsOpen, settingsSection]);
 
   useEffect(() => {
     let cancelled = false;
@@ -779,6 +892,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
     setPendingDeleteId(null);
     if (!id) return;
     void (async () => {
+      const wasActive = activeSessionIdRef.current === id;
       const next = sessions.filter((s) => s.id !== id);
       await deleteChatSession(id);
       for (const k of [...summaryCacheRef.current.keys()]) {
@@ -798,16 +912,20 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
         await saveMessages(nid, []);
         await saveActiveSessionId(nid);
         setActiveSessionId(nid);
+        setInput('');
+        setError(null);
         return;
       }
       await persistSessionMeta(next);
-      if (activeSessionId === id) {
+      if (wasActive) {
         const first = next[0]!.id;
         await saveActiveSessionId(first);
         setActiveSessionId(first);
+        setInput('');
+        setError(null);
       }
     })();
-  }, [activeSessionId, pendingDeleteId, persistSessionMeta, sessions, t]);
+  }, [pendingDeleteId, persistSessionMeta, sessions, t]);
 
   const saveSettingsClick = useCallback(() => {
     void (async () => {
@@ -888,6 +1006,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
       };
       await saveSettings(empty);
       setSettingsDraft(empty);
+      clearOpenAiLmPolyfillConfig();
       setSettingsNotice(t('settings.clearedAllData'));
     })();
   }, [resetToFreshSingleChat, t]);
@@ -2115,7 +2234,18 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                 >
                   <div className="composer-mobile-chip composer-mobile-chip--assistant">
                     <span className="composer-mobile-chip-label">{t('composer.mobileChipAssistant')}</span>
-                    <span className="composer-mobile-chip-value">{modelUiName}</span>
+                    {isOpenAiLanguageModelPolyfillInstalled() ? (
+                      <button
+                        type="button"
+                        className="composer-mobile-chip-value composer-mobile-chip-value--remote-lm"
+                        onClick={openRemoteLanguageModelSettings}
+                        title={t('settings.remoteLm.openFromComposerHint')}
+                      >
+                        {modelUiName}
+                      </button>
+                    ) : (
+                      <span className="composer-mobile-chip-value">{modelUiName}</span>
+                    )}
                   </div>
                   {settingsDraft.preferredName.trim() ? (
                     <div className="composer-mobile-chip composer-mobile-chip--you">
@@ -2133,7 +2263,18 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                   >
                     <span className="composer-model-row">
                       <span className="composer-model-name-wrap">
-                        <span className="composer-model-name">{modelUiName}</span>
+                        {isOpenAiLanguageModelPolyfillInstalled() ? (
+                          <button
+                            type="button"
+                            className="composer-model-name composer-model-name--clickable"
+                            onClick={openRemoteLanguageModelSettings}
+                            title={t('settings.remoteLm.openFromComposerHint')}
+                          >
+                            {modelUiName}
+                          </button>
+                        ) : (
+                          <span className="composer-model-name">{modelUiName}</span>
+                        )}
                       </span>
                     </span>
                   </div>
@@ -2181,6 +2322,25 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                         aria-label={t('chat.export.open')}
                       >
                         <IconExportChat size={17} />
+                      </button>
+                    ) : null}
+                    {activeSessionId ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-icon composer-rail-btn composer-delete-chat-btn"
+                        disabled={
+                          busy ||
+                          (messages.length === 0 &&
+                            !input.trim() &&
+                            pendingAttachments.length === 0)
+                        }
+                        title={t('composer.deleteCurrentChatAria')}
+                        aria-label={t('composer.deleteCurrentChatAria')}
+                        onClick={() => askDeleteSession(activeSessionId)}
+                      >
+                        <span className="composer-delete-chat-x" aria-hidden>
+                          ×
+                        </span>
                       </button>
                     ) : null}
                   </div>
@@ -2304,7 +2464,9 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
           {settingsRefineError ? <p className="settings-dialog-error">{settingsRefineError}</p> : null}
           <div className="settings-vscode-split">
             <nav className="settings-vscode-nav" role="tablist" aria-label={t('settings.navAria')}>
-              {SETTINGS_SECTION_IDS.map((id) => (
+              {SETTINGS_SECTION_IDS.filter(
+                (id) => id !== 'remoteModel' || isOpenAiLanguageModelPolyfillInstalled(),
+              ).map((id) => (
                 <button
                   key={id}
                   type="button"
@@ -2401,6 +2563,21 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
                     />
                     <p className="hint">{t('settings.streamFirstChunkTimeoutHelp')}</p>
                   </div>
+                </div>
+              ) : null}
+              {settingsSection === 'remoteModel' && isOpenAiLanguageModelPolyfillInstalled() ? (
+                <div id="settings-pane-remote-lm">
+                  <h3 className="settings-vscode-pane-title">{t('settings.sectionRemoteLm')}</h3>
+                  <OpenAiLmPolyfillSettingsForm
+                    t={t}
+                    onSaved={() => {
+                      setSettingsNotice(t('settings.remoteLm.saved'));
+                      lmRef.current?.destroy();
+                      lmRef.current = null;
+                      lmUsesImagesRef.current = false;
+                      setModelUiName(modelLabelForSession(null, t));
+                    }}
+                  />
                 </div>
               ) : null}
               {settingsSection === 'profile' ? (

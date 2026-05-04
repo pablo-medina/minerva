@@ -33,7 +33,7 @@ export function loadLegacyOpenAiConfig(): OpenAiDriverStored | null {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const baseUrl = normalizeOpenAiBaseUrl(typeof parsed.baseUrl === 'string' ? parsed.baseUrl : '');
     const modelId = typeof parsed.modelId === 'string' ? parsed.modelId.trim() : '';
-    if (!baseUrl || !modelId) return null;
+    if (!baseUrl) return null;
     const apiKey = typeof parsed.apiKey === 'string' ? parsed.apiKey : '';
     const displayAliasRaw = typeof parsed.displayAlias === 'string' ? parsed.displayAlias.trim() : '';
     return {
@@ -49,7 +49,13 @@ export function loadLegacyOpenAiConfig(): OpenAiDriverStored | null {
   }
 }
 
+/** Base URL is set; stored `modelId` may be empty when the picker supplies the model id separately. */
+export function isOpenAiEndpointConfigured(c: OpenAiDriverStored | null | undefined): boolean {
+  return Boolean(c?.baseUrl?.trim());
+}
+
+/** Resolved config ready for API calls (base URL plus model id — callers merge picker model into cfg when needed). */
 export function isOpenAiConfigComplete(c: OpenAiDriverStored | null | undefined): c is OpenAiDriverStored {
-  return Boolean(c?.baseUrl?.trim() && c?.modelId?.trim());
+  return Boolean(c?.baseUrl?.trim() && c.modelId?.trim());
 }
 

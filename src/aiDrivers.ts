@@ -1,7 +1,11 @@
 import type { LocalSettings } from './types';
 import { languageModelSupported } from './promptApi';
 import { OpenAiLanguageModelDriver } from './drivers/openaiLanguageModel/OpenAiLanguageModelDriver';
-import { isOpenAiConfigComplete, type OpenAiDriverStored } from './drivers/openaiLanguageModel/storage';
+import {
+  isOpenAiConfigComplete,
+  isOpenAiEndpointConfigured,
+  type OpenAiDriverStored,
+} from './drivers/openaiLanguageModel/storage';
 
 export type AiDriverId = 'nano' | 'openai';
 
@@ -16,7 +20,7 @@ export function listAiDriverOptions(
   labels: { nano: string; openAiDefault: string },
 ): AiDriverOption[] {
   const nanoAvailable = languageModelSupported();
-  const openAiAvailable = isOpenAiConfigComplete(settings.openAiConfig ?? null);
+  const openAiAvailable = isOpenAiEndpointConfigured(settings.openAiConfig ?? null);
   return [
     { id: 'nano', label: labels.nano, available: nanoAvailable },
     {
@@ -30,7 +34,7 @@ export function listAiDriverOptions(
 export function isDriverUsable(settings: LocalSettings, driverId: AiDriverId | undefined): boolean {
   if (!driverId) return false;
   if (driverId === 'nano') return languageModelSupported();
-  return isOpenAiConfigComplete(settings.openAiConfig ?? null);
+  return isOpenAiEndpointConfigured(settings.openAiConfig ?? null);
 }
 
 export async function createDriverSession(opts: {

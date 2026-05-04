@@ -81,7 +81,7 @@ function normalizeOpenAiConfig(raw: unknown): OpenAiDriverStored | undefined {
   const o = raw as Record<string, unknown>;
   const baseUrl = normalizeOpenAiBaseUrl(typeof o.baseUrl === 'string' ? o.baseUrl : '');
   const modelId = typeof o.modelId === 'string' ? o.modelId.trim() : '';
-  if (!baseUrl || !modelId) return undefined;
+  if (!baseUrl) return undefined;
   const apiKey = typeof o.apiKey === 'string' ? o.apiKey : '';
   const displayAliasRaw = typeof o.displayAlias === 'string' ? o.displayAlias.trim() : '';
   return {

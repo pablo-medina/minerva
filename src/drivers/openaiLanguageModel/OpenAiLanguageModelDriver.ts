@@ -1,7 +1,7 @@
 import { convertInitialPromptsToOpenAi, convertPromptInputToOpenAiUserRows } from './convertPrompt';
 import { streamOpenAiChatCompletionDeltas } from './openAiHttp';
 import type { OpenAiDriverStored } from './storage';
-import { isOpenAiConfigComplete } from './storage';
+import { isOpenAiConfigComplete, isOpenAiEndpointConfigured } from './storage';
 
 type OpenAiChatRow =
   | { role: 'system'; content: string }
@@ -25,7 +25,7 @@ export class OpenAiLanguageModelDriver extends EventTarget {
   static readonly minervaDriverKind = 'openai-compatible' as const;
 
   static async availabilityWithConfig(cfg: OpenAiDriverStored | null | undefined): Promise<Availability> {
-    return isOpenAiConfigComplete(cfg ?? null) ? 'available' : 'unavailable';
+    return isOpenAiEndpointConfigured(cfg ?? null) ? 'available' : 'unavailable';
   }
 
   static async createWithConfig(

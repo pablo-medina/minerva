@@ -32,7 +32,7 @@ export async function generateChatTitleWithSystemAi(opts: {
   signal: AbortSignal;
 }): Promise<string | null> {
   const systemAiId = opts.settings.systemAiId;
-  if (!systemAiId || !isDriverUsable(opts.settings, systemAiId)) return null;
+  if (!systemAiId || !(await isDriverUsable(opts.settings, systemAiId))) return null;
   if (systemAiId === 'nano') {
     const session = await createDriverSession({
       driverId: 'nano',
@@ -75,7 +75,7 @@ export async function summarizeWithSystemAi(opts: {
   onDelta?: (partial: string) => void;
 }): Promise<string | null> {
   const systemAiId = opts.settings.systemAiId;
-  if (!systemAiId || !isDriverUsable(opts.settings, systemAiId)) return null;
+  if (!systemAiId || !(await isDriverUsable(opts.settings, systemAiId))) return null;
   if (systemAiId === 'nano') {
     return summarizeChatMessages(opts);
   }

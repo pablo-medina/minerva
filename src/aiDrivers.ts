@@ -1,5 +1,5 @@
 import type { LocalSettings } from './types';
-import { languageModelSupported } from './promptApi';
+import { languageModelEntryOk } from './promptApi';
 import { OpenAiLanguageModelDriver } from './drivers/openaiLanguageModel/OpenAiLanguageModelDriver';
 import {
   isOpenAiConfigComplete,
@@ -15,11 +15,11 @@ export type AiDriverOption = {
   available: boolean;
 };
 
-export function listAiDriverOptions(
+export async function listAiDriverOptions(
   settings: LocalSettings,
   labels: { nano: string; openAiDefault: string },
-): AiDriverOption[] {
-  const nanoAvailable = languageModelSupported();
+): Promise<AiDriverOption[]> {
+  const nanoAvailable = await languageModelEntryOk();
   const openAiAvailable = isOpenAiEndpointConfigured(settings.openAiConfig ?? null);
   return [
     { id: 'nano', label: labels.nano, available: nanoAvailable },
@@ -31,9 +31,12 @@ export function listAiDriverOptions(
   ];
 }
 
-export function isDriverUsable(settings: LocalSettings, driverId: AiDriverId | undefined): boolean {
+export async function isDriverUsable(
+  settings: LocalSettings,
+  driverId: AiDriverId | undefined,
+): Promise<boolean> {
   if (!driverId) return false;
-  if (driverId === 'nano') return languageModelSupported();
+  if (driverId === 'nano') return languageModelEntryOk();
   return isOpenAiEndpointConfigured(settings.openAiConfig ?? null);
 }
 
@@ -43,6 +46,9 @@ export async function createDriverSession(opts: {
   create: LanguageModelCreateOptions;
 }): Promise<LanguageModel> {
   if (opts.driverId === 'nano') {
+    if (!(await languageModelEntryOk())) {
+      throw new Error('error.noLm');
+    }
     return LanguageModel.create(opts.create);
   }
   const cfg = opts.settings.openAiConfig;

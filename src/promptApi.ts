@@ -20,16 +20,7 @@ export function lmCoreForThreadUsesImages(usesImages: boolean): typeof LM_CORE {
   return usesImages ? LM_CORE_MULTIMODAL : LM_CORE;
 }
 
-export async function languageModelImageInputSupported(): Promise<boolean> {
-  if (!languageModelSupported()) return false;
-  try {
-    const a = await LanguageModel.availability(LM_CORE_MULTIMODAL);
-    return a !== 'unavailable';
-  } catch {
-    return false;
-  }
-}
-
+/** True when the Prompt API globals exist (`LanguageModel` + `availability`). Cheap sync probe only. */
 export function languageModelSupported(): boolean {
   try {
     return (
@@ -41,8 +32,33 @@ export function languageModelSupported(): boolean {
 }
 
 /**
+ * Browsers that may expose Chromium stubs without a usable on-device Gemini Nano session.
+ * Uses `navigator.brave.isBrave()` when present; widen if Brave ships working Prompt API.
+ */
+async function hostAllowsOnDeviceLanguageModel(): Promise<boolean> {
+  try {
+    const nav = navigator as Navigator & { brave?: { isBrave?: () => Promise<boolean> } };
+    if (typeof nav.brave?.isBrave === 'function' && (await nav.brave.isBrave())) return false;
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
+export async function languageModelImageInputSupported(): Promise<boolean> {
+  if (!languageModelSupported()) return false;
+  if (!(await hostAllowsOnDeviceLanguageModel())) return false;
+  try {
+    const a = await LanguageModel.availability(LM_CORE_MULTIMODAL);
+    return a !== 'unavailable';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * True for Chromium-based desktop browsers where on-device Prompt API flags may apply
- * (Chrome, Edge, etc.). Not a guarantee the API exists — use with `languageModelSupported()`.
+ * (Chrome, Edge, etc.). Not a guarantee the API exists — use `languageModelEntryOk()` for gating Nano.
  */
 export function isChromiumBrowser(): boolean {
   if (typeof navigator === 'undefined') return false;
@@ -59,6 +75,7 @@ export function isChromiumBrowser(): boolean {
 
 export async function languageModelAvailability(): Promise<Availability> {
   if (!languageModelSupported()) return 'unavailable';
+  if (!(await hostAllowsOnDeviceLanguageModel())) return 'unavailable';
   try {
     return await LanguageModel.availability(LM_CORE);
   } catch {

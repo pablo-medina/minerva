@@ -12,8 +12,8 @@ import {
 import { createTranslator, detectBrowserLang } from './i18n';
 import {
   LM_CORE,
+  languageModelEntryOk,
   languageModelImageInputSupported,
-  languageModelSupported,
   lmCoreForThreadUsesImages,
 } from './promptApi';
 import { BackupRestoreError, downloadMinervaBackupFile, importMinervaBackupFromFile } from './backupRestore';
@@ -162,6 +162,25 @@ function withSelection(settings: LocalSettings, target: 'chat' | 'system', sel: 
     systemAiModelKey: key,
     systemAiId: sel.kind === 'none' ? undefined : (sel.kind as AiDriverId),
   };
+}
+
+/** Clears Gemini Nano selections when the runtime proves the Prompt API cannot be used. */
+function sanitizeNanoSelection(
+  settings: LocalSettings,
+  nanoOk: boolean,
+): { next: LocalSettings; changed: boolean } {
+  if (nanoOk) return { next: settings, changed: false };
+  let next = settings;
+  let changed = false;
+  if (resolveSelection(next, 'chat').kind === 'nano') {
+    next = withSelection(next, 'chat', { kind: 'none' });
+    changed = true;
+  }
+  if (resolveSelection(next, 'system').kind === 'nano') {
+    next = withSelection(next, 'system', { kind: 'none' });
+    changed = true;
+  }
+  return { next, changed };
 }
 
 /** Composer + bubble heading: prefers external display alias alone when set. */
@@ -624,7 +643,7 @@ function MinervaChatApp({ lang, setLang, theme, setTheme, t }: MinervaChatAppPro
   const chatsSearchInputRef = useRef<HTMLInputElement>(null);
   const [chatsFilterQuery, setChatsFilterQuery] = useState('');
 
-  const nanoLmRuntimeOk = useMemo(() => languageModelSupported(), []);
+  const [nanoLmRuntimeOk, setNanoLmRuntimeOk] = useState(false);
   const chatSelection = useMemo(() => resolveSelection(settingsDraft, 'chat'), [settingsDraft]);
   const systemSelection = useMemo(() => resolveSelection(settingsDraft, 'system'), [settingsDraft]);
   const systemSelectionModelId = systemSelection.kind === 'openai' ? systemSelection.modelId : '';
@@ -894,19 +913,34 @@ Model id: ${trimmedModelId}`,
   }, [bootstrapSessions]);
 
   useEffect(() => {
-    void loadSettings().then((loaded) => {
+    let cancelled = false;
+    void (async () => {
+      const nanoOk = await languageModelEntryOk();
+      if (cancelled) return;
+      setNanoLmRuntimeOk(nanoOk);
+      const loaded = await loadSettings();
+      if (cancelled) return;
+      const { next: sanitized, changed } = sanitizeNanoSelection(loaded, nanoOk);
+      if (changed) {
+        await saveSettings(sanitized);
+      }
+      if (cancelled) return;
+      const basis = changed ? sanitized : loaded;
       const shouldAutoSelectNano =
-        languageModelSupported() &&
-        resolveSelection(loaded, 'chat').kind === 'none' &&
-        resolveSelection(loaded, 'system').kind === 'none';
+        nanoOk &&
+        resolveSelection(basis, 'chat').kind === 'none' &&
+        resolveSelection(basis, 'system').kind === 'none';
       if (shouldAutoSelectNano) {
-        const next = withSelection(withSelection(loaded, 'chat', { kind: 'nano' }), 'system', { kind: 'nano' });
-        setSettingsDraft(next);
-        void saveSettings(next);
+        const draft = withSelection(withSelection(basis, 'chat', { kind: 'nano' }), 'system', { kind: 'nano' });
+        setSettingsDraft(draft);
+        void saveSettings(draft);
         return;
       }
-      setSettingsDraft(loaded);
-    });
+      setSettingsDraft(sanitized);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

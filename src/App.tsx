@@ -3019,6 +3019,8 @@ Model id: ${trimmedModelId}`,
                                         src={a.dataUrl}
                                         alt=""
                                         className="msg-attachment-thumb-inline"
+                                        loading="lazy"
+                                        decoding="async"
                                         draggable={false}
                                       />
                                       <div className="msg-attachment-meta">
@@ -3380,7 +3382,13 @@ Model id: ${trimmedModelId}`,
                               TXT
                             </span>
                           ) : (
-                            <img src={a.dataUrl} alt="" className="attachment-thumb" />
+                            <img
+                              src={a.dataUrl}
+                              alt=""
+                              className="attachment-thumb"
+                              loading="lazy"
+                              decoding="async"
+                            />
                           )}
                           <span>{a.name}</span>
                           <button

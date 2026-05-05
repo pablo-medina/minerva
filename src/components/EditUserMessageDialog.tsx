@@ -82,7 +82,13 @@ export function EditUserMessageDialog({
                     TXT
                   </span>
                 ) : (
-                  <img src={a.dataUrl} alt="" className="attachment-thumb" />
+                  <img
+                    src={a.dataUrl}
+                    alt=""
+                    className="attachment-thumb"
+                    loading="lazy"
+                    decoding="async"
+                  />
                 )}
                 <span>{a.name}</span>
                 <button
